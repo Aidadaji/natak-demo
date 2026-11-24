@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Short Drama App Demo</title>
+<title>Natak Short Dramas</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Rozha+One&family=Hind:wght@400;500;600;700&display=swap" rel="stylesheet">
 <style>
@@ -56,6 +56,7 @@ button:focus-visible,a:focus-visible{outline:3px solid var(--marigold);outline-o
 .card span{display:block;font-size:12.5px;color:var(--dust);margin-top:6px}
 .glow{position:absolute;inset:0;background:radial-gradient(circle at 70% 20%,rgba(255,255,255,.28),transparent 45%),linear-gradient(to top,rgba(18,10,26,.85),transparent 60%);pointer-events:none}
 .hero>*:not(.glow),.poster>*:not(.glow){position:relative}
+.poster>.tag{position:absolute}
 .foot{padding:22px 16px 28px;color:var(--dust);font-size:12.5px}
 
 /* PLAYER */
@@ -126,31 +127,48 @@ button:focus-visible,a:focus-visible{outline:3px solid var(--marigold);outline-o
 .me dl{margin:0;display:grid;grid-template-columns:1fr auto;gap:8px 12px;font-size:14.5px}
 .me dt{color:var(--dust)}
 .me dd{margin:0;font-weight:600;text-align:right;font-variant-numeric:tabular-nums}
+
+video#vid{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;background:#000;display:none}
+.hasvid video#vid{display:block}
+.hasvid .scene,.hasvid .placeholder,.hasvid .cap,.hasvid .namecard{display:none !important}
+.side button b{display:block;font-size:10px;font-weight:600;color:var(--dust)}
+.side button.on{background:var(--marigold);color:#1b1026}
+.side button.on b{color:#1b1026}
+.stats{font-size:12.5px;color:var(--dust);margin-top:3px;font-variant-numeric:tabular-nums}
+.field{display:block;margin-bottom:10px}
+.field span{display:block;font-size:13px;color:var(--dust);margin-bottom:4px}
+.field input{width:100%;padding:11px;border-radius:10px;border:1px solid var(--line);background:var(--night);color:var(--paper);font:inherit}
+.formerr{color:#ff9aa8;font-size:14px;min-height:20px;margin:4px 0}
+.linkbtn{color:var(--marigold);font-weight:600;font-size:14px;padding:8px 0}
+.wide.alt{background:none;border:1px solid var(--line);color:var(--paper);margin-top:8px;display:block;text-align:center;text-decoration:none}
+.toast.err{background:var(--sindoor);color:#fff}
+.copybox{width:100%;padding:10px;border-radius:10px;border:1px dashed var(--line);background:var(--night);color:var(--paper);font:13px/1.3 ui-monospace,monospace;margin-bottom:10px}
 @media (prefers-reduced-motion:reduce){.scene,.scene i{animation:none}}
 </style>
 </head>
 <body>
 <div class="app" id="app">
-  <div class="ribbon"><span>Demo. Sample pictures, no real video or payments.</span><button id="resetBtn" type="button">Reset</button></div>
+  <div class="ribbon"><span>Test build. Payments and ads are in test mode.</span><span id="who"></span></div>
   <div class="toast" id="toast" role="status"></div>
 
-  <!-- HOME -->
   <main class="view on" id="home">
     <div class="top">
       <div class="brand">NATAK<small>Placeholder name. Your brand goes here.</small></div>
-      <button class="pill" id="acctBtn" type="button">Free plan</button>
+      <button class="pill" id="acctBtn" type="button">Account</button>
     </div>
     <button class="hero" id="hero" type="button"></button>
-    <section class="shelf"><h3>Continue from episode 1</h3><div class="row" id="rowAll"></div></section>
+    <section class="shelf" id="contSec" hidden><h3>Continue watching</h3><div class="row" id="rowCont"></div></section>
+    <section class="shelf" id="listSec" hidden><h3>My list</h3><div class="row" id="rowList"></div></section>
+    <section class="shelf"><h3>All shows</h3><div class="row" id="rowAll"></div></section>
     <section class="shelf"><h3>Hidden identity</h3><div class="row" id="rowHidden"></div></section>
     <section class="shelf"><h3>Revenge and comeback</h3><div class="row" id="rowRevenge"></div></section>
-    <p class="foot">Episodes 1 to 8 of every show are free. Tap any show to try the paywall at episode 9.</p>
+    <p class="foot" id="foot"></p>
   </main>
 
-  <!-- PLAYER -->
   <section class="view" id="player">
     <div class="stage" id="stage">
       <div class="scene" id="scene"></div>
+      <video id="vid" playsinline preload="metadata"></video>
       <div class="shade"></div>
       <div class="tap" id="tap" role="button" tabindex="0" aria-label="Pause or play"></div>
       <div class="bigplay" aria-hidden="true">&#9654;</div>
@@ -158,10 +176,12 @@ button:focus-visible,a:focus-visible{outline:3px solid var(--marigold);outline-o
         <button class="back" id="backBtn" type="button" aria-label="Back to home">&#8249;</button>
         <div class="ptitle"><span id="pShow"></span><small id="pEp"></small></div>
       </div>
-      <div class="placeholder">Sample picture standing in for the video. Each episode runs 12 s here.</div>
+      <div class="placeholder">No video uploaded for this episode yet. Sample picture, 12 s.</div>
       <div class="namecard" id="namecard"></div>
       <div class="cap" id="cap"></div>
       <div class="side">
+        <button id="likeBtn" type="button" aria-label="Like this show">Like<b id="likeN">0</b></button>
+        <button id="saveBtn" type="button" aria-label="Add to my list">List<b id="saveN">0</b></button>
         <button id="listBtn" type="button" aria-label="All episodes">EP</button>
         <button id="shareBtn" type="button" aria-label="Share this show">Share</button>
       </div>
@@ -175,224 +195,9 @@ button:focus-visible,a:focus-visible{outline:3px solid var(--marigold);outline-o
     </div>
   </section>
 
-  <!-- SHEET -->
   <div class="scrim" id="scrim"><div class="sheet" id="sheet" role="dialog" aria-modal="true"></div></div>
 </div>
 
-<script>
-(function(){
-"use strict";
-var FREE = 8, EP_MS = 12000, AD_CAP = 5;
-var PRICE = { ep: 5, pass: 149, quarter: 399 };
-
-var SHOWS = [
- { id:"ichcha", title:"Ichchadhari Ki Dulhan", eps:50, genre:"Fantasy", shelf:["hidden"], c:["#0f6b5c","#7a1f6b","#f5a524"],
-   line:"Sold into a cursed royal family, she finds out what her husband becomes on the new moon.",
-   who:["Meera","The bride nobody asked"],
-   caps:["They sold me for <em>forty lakh</em>.","Nobody in this palace looks at the groom.","\"Do not open his door on <em>amavasya</em>.\"","Her mangalsutra starts to <em>glow</em>.","His eyes turn to <em>slits</em>."] },
- { id:"naukar", title:"Naukar Nahi, Malik Hoon", eps:60, genre:"Hidden identity", shelf:["hidden","revenge"], c:["#8a2a12","#3a1552","#f5a524"],
-   line:"The family driver they mock at the engagement has just bought all their debt.",
-   who:["Arjun","Driver, Rathore Palace Hotel"],
-   caps:["\"Drivers eat <em>outside</em>.\"","He picks the glass off the floor himself.","One call: \"Buy the <em>whole</em> loan.\"","The bank file reaches the stage.","He signs the <em>foreclosure</em> in front of them."] },
- { id:"bahu", title:"Bahu Number 2", eps:70, genre:"Comeback", shelf:["revenge"], c:["#a31f4a","#2b1a5a","#f5a524"],
-   line:"Thrown out with her son, she returns seven years later as the company's new MD.",
-   who:["Kavya","The bahu they threw out"],
-   caps:["Seven years ago they kept her <em>bangles</em>.","Today the board waits for the new MD.","\"Madam is here.\" Every chair turns.","Her ex-husband drops his pen.","Her son looks up: \"<em>Papa?</em>\""] },
- { id:"janam", title:"Pichhla Janam", eps:60, genre:"Second chance", shelf:["revenge"], c:["#1d4f8a","#5a1747","#f5a524"],
-   line:"Killed by her best friend and fiance, she wakes up a year earlier.",
-   who:["Riya","Intern, one year too early"],
-   caps:["The last thing she saw was <em>her friend's smile</em>.","She wakes up. The calendar is wrong.","Same office. Same lift. Same day.","He walks in with the same line ready.","She <em>slaps</em> him before he speaks."] },
- { id:"akhada", title:"Akhada Ka Raja", eps:55, genre:"Hidden identity", shelf:["hidden"], c:["#7a5a10","#3b1f1f","#f5a524"],
-   line:"A quiet wrestling coach is the national champion who vanished after a scandal.",
-   who:["Balwan","Coach, village akhada"],
-   caps:["\"Old man, <em>clean the mat</em>.\"","His daughter clenches her fists.","An old medal falls out of the trunk.","The politician's son steps into the ring.","\"<em>Mere papa ko koi nahi hara sakta.</em>\""] }
-];
-
-var S; // state
-function fresh(){ return { open:{}, pass:{}, vip:false, adsLeft:AD_CAP, spent:0, cur:null, ep:1 }; }
-S = fresh();
-
-var $ = function(id){ return document.getElementById(id); };
-function esc(s){ return String(s).replace(/[&<>"]/g,function(c){return {"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;"}[c];}); }
-function show(id){ return SHOWS.filter(function(s){return s.id===id;})[0]; }
-function bg(c){ return "linear-gradient(155deg,"+c[0]+","+c[1]+")"; }
-function canWatch(sid, ep){ return ep<=FREE || S.vip || S.pass[sid] || (S.open[sid] && S.open[sid][ep]); }
-function unlock(sid, ep){ (S.open[sid] = S.open[sid] || {})[ep] = true; }
-
-/* ---------- HOME ---------- */
-function card(s){
-  return '<button class="card" type="button" data-show="'+s.id+'"><div class="poster" style="background:'+bg(s.c)+'"><div class="glow"></div><span class="tag">'+esc(s.genre)+'</span><b>'+esc(s.title)+'</b></div><span>'+s.eps+' episodes, '+FREE+' free</span></button>';
-}
-function renderHome(){
-  var h = SHOWS[0];
-  $("hero").style.background = bg(h.c);
-  $("hero").setAttribute("data-show", h.id);
-  $("hero").innerHTML = '<div class="glow"></div><h2>'+esc(h.title)+'</h2><p>'+esc(h.line)+'</p><span class="cta">&#9654; Watch episode 1 free</span>';
-  $("rowAll").innerHTML = SHOWS.map(card).join("");
-  $("rowHidden").innerHTML = SHOWS.filter(function(s){return s.shelf.indexOf("hidden")>-1;}).map(card).join("");
-  $("rowRevenge").innerHTML = SHOWS.filter(function(s){return s.shelf.indexOf("revenge")>-1;}).map(card).join("");
-  var a = $("acctBtn");
-  a.textContent = S.vip ? "Subscribed" : "Free plan";
-  a.className = "pill" + (S.vip ? " vip" : "");
-}
-function go(view){
-  $("home").classList.toggle("on", view==="home");
-  $("player").classList.toggle("on", view==="player");
-  if(view==="home"){ stop(); renderHome(); }
-}
-
-/* ---------- PLAYER ---------- */
-var raf = null, startAt = 0, elapsed = 0, paused = false;
-function stop(){ if(raf){ cancelAnimationFrame(raf); raf = null; } }
-function play(sid, ep){
-  var s = show(sid);
-  if(ep > s.eps){ closeSheet(); toast("That was the last episode"); go("home"); return; }
-  if(!canWatch(sid, ep)){ S.cur = sid; S.ep = ep; drawStage(s, ep, true); paywall(); return; }
-  S.cur = sid; S.ep = ep;
-  closeSheet(); go("player"); drawStage(s, ep, false);
-  elapsed = 0; paused = false; $("stage").classList.remove("paused");
-  startAt = performance.now(); stop(); raf = requestAnimationFrame(tick);
-}
-function drawStage(s, ep, frozen){
-  go2player();
-  $("pShow").textContent = s.title;
-  $("pEp").textContent = "Episode " + ep + " of " + s.eps + (ep<=FREE ? " · Free" : "");
-  var sc = $("scene"); sc.style.background = bg(s.c);
-  sc.innerHTML = '<i style="width:60%;height:38%;left:-8%;top:8%;background:'+s.c[2]+'"></i><i style="width:55%;height:40%;right:-10%;bottom:14%;background:'+s.c[0]+';animation-delay:-4s"></i><i style="width:40%;height:28%;left:30%;top:40%;background:#fff;opacity:.16;animation-delay:-2s"></i>';
-  $("namecard").innerHTML = ep===1 ? '<b>'+esc(s.who[0])+'</b>'+esc(s.who[1]) : "";
-  $("namecard").style.display = ep===1 ? "block" : "none";
-  $("cap").innerHTML = s.caps[0];
-  $("prog").style.width = "0%";
-  if(frozen){ stop(); $("stage").classList.add("paused"); }
-}
-function go2player(){ $("home").classList.remove("on"); $("player").classList.add("on"); }
-function tick(now){
-  if(!paused){ elapsed += now - startAt; }
-  startAt = now;
-  var s = show(S.cur), f = Math.min(1, elapsed / EP_MS);
-  $("prog").style.width = (f*100).toFixed(1) + "%";
-  var i = Math.min(s.caps.length-1, Math.floor(f * s.caps.length));
-  if($("cap").getAttribute("data-i") !== String(i)){ $("cap").setAttribute("data-i", i); $("cap").innerHTML = s.caps[i]; }
-  if(f >= 1){
-    raf = null;
-    if($("autoplay").checked){ play(S.cur, S.ep + 1); }
-    else { paused = true; $("stage").classList.add("paused"); }
-    return;
-  }
-  raf = requestAnimationFrame(tick);
-}
-function togglePause(){
-  if(!raf && elapsed >= EP_MS){ play(S.cur, S.ep); return; }
-  paused = !paused; $("stage").classList.toggle("paused", paused);
-}
-
-/* ---------- SHEETS ---------- */
-function openSheet(html){ $("sheet").innerHTML = html; $("scrim").classList.add("on"); var b = $("sheet").querySelector("button"); if(b){ b.focus(); } }
-function closeSheet(){ $("scrim").classList.remove("on"); $("sheet").innerHTML = ""; }
-var toastT;
-function toast(msg){ var t = $("toast"); t.textContent = msg; t.classList.add("on"); clearTimeout(toastT); toastT = setTimeout(function(){ t.classList.remove("on"); }, 2600); }
-
-function paywall(){
-  var s = show(S.cur), left = s.eps - S.ep + 1, noAds = S.adsLeft <= 0;
-  openSheet(
-    '<h4>Episode '+S.ep+' is locked</h4>'+
-    '<p class="sub">'+esc(s.title)+'. '+left+' episodes left. Pick a way to keep watching.</p>'+
-    '<button class="opt" type="button" data-act="ad"'+(noAds?' disabled':'')+'><div class="t"><b>Watch an ad</b><span>Opens this episode. '+S.adsLeft+' of '+AD_CAP+' left today.</span></div><div class="p free">Free</div></button>'+
-    '<button class="opt" type="button" data-act="share"><div class="t"><b>Send to a friend</b><span>Opens the next 3 episodes when they join.</span></div><div class="p free">Free</div></button>'+
-    '<button class="opt" type="button" data-act="buy" data-kind="ep"><div class="t"><b>This episode only</b><span>One tap by UPI.</span></div><div class="p">₹'+PRICE.ep+'</div></button>'+
-    '<button class="opt best" type="button" data-act="buy" data-kind="pass"><div class="t"><b>Whole show pass</b><span>All '+s.eps+' episodes of this show, yours to rewatch.</span></div><div class="p">₹'+PRICE.pass+'</div></button>'+
-    '<button class="opt" type="button" data-act="buy" data-kind="quarter"><div class="t"><b>Every show, 3 months</b><span>UPI Autopay. Reminder before each renewal, cancel in one tap.</span></div><div class="p">₹'+PRICE.quarter+'</div></button>'+
-    '<button class="close" type="button" data-act="home">Not now</button>'
-  );
-}
-function payScreen(kind){
-  var s = show(S.cur);
-  var label = kind==="ep" ? "Episode "+S.ep+" of "+s.title : kind==="pass" ? "Whole show pass: "+s.title : "All shows for 3 months";
-  openSheet(
-    '<h4>Pay by UPI</h4><p class="sub">'+esc(label)+'</p>'+
-    '<div class="pay">Amount<div class="amt">₹'+PRICE[kind]+'</div>Demo checkout. No money moves and no UPI app opens.</div>'+
-    '<button class="wide" type="button" data-act="paid" data-kind="'+kind+'">Pretend payment succeeded</button>'+
-    '<button class="close" type="button" data-act="paywall">Back</button>'
-  );
-}
-var adT;
-function adScreen(){
-  var n = 5;
-  openSheet('<h4>Ad break</h4><p class="sub">A real ad would play here.</p><div class="adbox"><span>Episode opens in</span><b id="adN">'+n+'</b></div><p class="note">Demo: no ad network is connected.</p>');
-  clearInterval(adT);
-  adT = setInterval(function(){
-    n--; var el = $("adN"); if(!el){ clearInterval(adT); return; }
-    el.textContent = n;
-    if(n <= 0){ clearInterval(adT); S.adsLeft--; unlock(S.cur, S.ep); toast("Episode "+S.ep+" opened"); play(S.cur, S.ep); }
-  }, 1000);
-}
-function shareScreen(fromPaywall){
-  var s = show(S.cur);
-  openSheet(
-    '<h4>Send this show</h4><p class="sub">In the real app this opens WhatsApp with your own invite link.</p>'+
-    '<div class="pay">"'+esc(s.title)+'" is free till episode '+FREE+'. Watch it with me.</div>'+
-    (fromPaywall
-      ? '<button class="wide" type="button" data-act="shared">Pretend my friend joined</button><p class="note">The 3 episodes open only after the friend installs, so shares cannot be faked.</p>'
-      : '<p class="note">Share from the paywall to open 3 episodes for free.</p>')+
-    '<button class="close" type="button" data-act="'+(fromPaywall?'paywall':'resume')+'">Back</button>'
-  );
-}
-function listScreen(){
-  var s = show(S.cur), h = "";
-  for(var e=1; e<=s.eps; e++){
-    var cls = e<=FREE ? "free" : canWatch(s.id, e) ? "open" : "lock";
-    h += '<button type="button" class="'+cls+(e===S.ep?" now":"")+'" data-act="ep" data-ep="'+e+'" aria-label="Episode '+e+(cls==="lock"?", locked":"")+'">'+e+'</button>';
-  }
-  openSheet('<h4>'+esc(s.title)+'</h4><p class="sub">'+esc(s.line)+'</p><div class="key"><span><i style="background:var(--leaf)"></i>Free</span><span><i style="background:var(--marigold)"></i>Opened</span><span><i style="background:var(--sindoor)"></i>Locked</span></div><div class="grid">'+h+'</div><button class="close" type="button" data-act="resume">Close</button>');
-}
-function acctScreen(){
-  var passes = Object.keys(S.pass).map(function(k){ return show(k).title; });
-  var n = 0; Object.keys(S.open).forEach(function(k){ n += Object.keys(S.open[k]).length; });
-  openSheet('<h4>My account</h4><p class="sub">What this demo viewer has so far.</p><div class="me"><dl>'+
-    '<dt>Plan</dt><dd>'+(S.vip?"All shows, 3 months":"Free")+'</dd>'+
-    '<dt>Show passes</dt><dd>'+(passes.length?esc(passes.join(", ")):"None")+'</dd>'+
-    '<dt>Single episodes opened</dt><dd>'+n+'</dd>'+
-    '<dt>Ad unlocks left today</dt><dd>'+S.adsLeft+' of '+AD_CAP+'</dd>'+
-    '<dt>Spent in this demo</dt><dd>₹'+S.spent+'</dd></dl></div>'+
-    '<button class="close" type="button" data-act="close">Close</button>');
-}
-
-/* ---------- EVENTS ---------- */
-document.addEventListener("click", function(ev){
-  var t = ev.target.closest("[data-show]");
-  if(t){ play(t.getAttribute("data-show"), 1); return; }
-  var a = ev.target.closest("[data-act]");
-  if(!a || a.disabled){ return; }
-  var act = a.getAttribute("data-act"), kind = a.getAttribute("data-kind");
-  if(act==="ad"){ adScreen(); }
-  else if(act==="share"){ shareScreen(true); }
-  else if(act==="buy"){ payScreen(kind); }
-  else if(act==="paywall"){ paywall(); }
-  else if(act==="home"){ closeSheet(); go("home"); }
-  else if(act==="close"){ closeSheet(); }
-  else if(act==="resume"){ closeSheet(); if(canWatch(S.cur,S.ep)){ paused = false; $("stage").classList.remove("paused"); } else { paywall(); } }
-  else if(act==="ep"){ play(S.cur, parseInt(a.getAttribute("data-ep"),10)); }
-  else if(act==="shared"){ for(var i=0;i<3;i++){ unlock(S.cur, S.ep+i); } toast("3 episodes opened"); play(S.cur, S.ep); }
-  else if(act==="paid"){
-    S.spent += PRICE[kind];
-    if(kind==="ep"){ unlock(S.cur, S.ep); toast("Episode "+S.ep+" opened"); }
-    else if(kind==="pass"){ S.pass[S.cur] = true; toast("Whole show opened"); }
-    else { S.vip = true; toast("Every show opened for 3 months"); }
-    play(S.cur, S.ep);
-  }
-});
-$("backBtn").addEventListener("click", function(){ go("home"); });
-$("nextBtn").addEventListener("click", function(){ play(S.cur, S.ep + 1); });
-$("tap").addEventListener("click", togglePause);
-$("tap").addEventListener("keydown", function(e){ if(e.key===" "||e.key==="Enter"){ e.preventDefault(); togglePause(); } });
-$("listBtn").addEventListener("click", function(){ paused = true; $("stage").classList.add("paused"); listScreen(); });
-$("shareBtn").addEventListener("click", function(){ paused = true; $("stage").classList.add("paused"); shareScreen(false); });
-$("acctBtn").addEventListener("click", acctScreen);
-$("resetBtn").addEventListener("click", function(){ clearInterval(adT); S = fresh(); closeSheet(); go("home"); toast("Demo reset"); });
-$("scrim").addEventListener("click", function(e){ if(e.target === $("scrim") && S.cur && canWatch(S.cur,S.ep)){ closeSheet(); } });
-
-renderHome();
-})();
-</script>
+<script src="app.js"></script>
 </body>
 </html>
