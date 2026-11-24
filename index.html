@@ -1,0 +1,398 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Short Drama App Demo</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Rozha+One&family=Hind:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+/* Layout idea: one phone-sized stage. Home shelf, full-bleed vertical player, bottom sheets for the paywall. Single dark theme by choice: it is a video app. */
+:root{
+  color-scheme: dark;
+  --night:#1b1026;      /* page and app background, plum-black */
+  --velvet:#2a1a3a;     /* raised surfaces */
+  --line:#4a3560;       /* borders */
+  --paper:#f6ecdf;      /* main text */
+  --dust:#b9a6c4;       /* secondary text */
+  --marigold:#f5a524;   /* accent, calls to action */
+  --sindoor:#d8344a;    /* locks, alerts */
+  --leaf:#3fbf8a;       /* success */
+  --display:"Rozha One", Georgia, serif;
+  --body:"Hind", system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+*{box-sizing:border-box}
+html,body{height:100%;margin:0}
+body{background:#120a1a;color:var(--paper);font-family:var(--body);font-size:16px;line-height:1.4;display:flex;justify-content:center}
+button{font:inherit;color:inherit;cursor:pointer;border:0;background:none}
+button:focus-visible,a:focus-visible{outline:3px solid var(--marigold);outline-offset:2px}
+.app{position:relative;width:100%;max-width:430px;height:100%;background:var(--night);display:flex;flex-direction:column;overflow:hidden}
+@media (min-width:480px){.app{border-left:1px solid var(--line);border-right:1px solid var(--line)}}
+
+/* demo ribbon */
+.ribbon{flex:none;background:var(--velvet);border-bottom:1px solid var(--line);padding:6px 16px;font-size:12.5px;color:var(--dust);display:flex;gap:8px;justify-content:space-between;align-items:center}
+.ribbon button{color:var(--marigold);font-weight:600;font-size:12.5px;padding:4px 0}
+
+.view{flex:1;min-height:0;overflow-y:auto;display:none}
+.view.on{display:block}
+
+/* HOME */
+.top{padding:18px 16px 6px;display:flex;justify-content:space-between;align-items:flex-end;gap:12px}
+.brand{font-family:var(--display);font-size:30px;line-height:1;color:var(--marigold);letter-spacing:.5px}
+.brand small{display:block;font-family:var(--body);font-size:12px;color:var(--dust);letter-spacing:0;margin-top:4px}
+.pill{font-size:12.5px;font-weight:600;border:1px solid var(--line);border-radius:999px;padding:5px 10px;color:var(--dust);white-space:nowrap}
+.pill.vip{color:#1b1026;background:var(--marigold);border-color:var(--marigold)}
+.hero{margin:12px 16px 4px;border-radius:14px;overflow:hidden;position:relative;min-height:210px;display:flex;flex-direction:column;justify-content:flex-end;padding:16px;text-align:left;width:calc(100% - 32px)}
+.hero h2{font-family:var(--display);font-weight:400;font-size:28px;line-height:1.05;margin:0 0 6px;text-wrap:balance;text-shadow:0 2px 12px rgba(0,0,0,.6)}
+.hero p{margin:0 0 12px;font-size:14px;color:#f3e6d8;max-width:30ch;text-shadow:0 1px 8px rgba(0,0,0,.7)}
+.cta{display:inline-flex;align-items:center;gap:8px;background:var(--marigold);color:#1b1026;font-weight:700;border-radius:999px;padding:9px 16px;font-size:15px;align-self:flex-start}
+.shelf h3{font-size:15px;font-weight:700;margin:20px 16px 10px;letter-spacing:.2px}
+.row{display:flex;gap:12px;overflow-x:auto;padding:0 16px 6px;scroll-snap-type:x proximity}
+.row::-webkit-scrollbar{display:none}
+.card{flex:none;width:128px;text-align:left;scroll-snap-align:start}
+.poster{height:182px;border-radius:10px;position:relative;overflow:hidden;display:flex;align-items:flex-end;padding:10px}
+.poster b{font-family:var(--display);font-weight:400;font-size:18px;line-height:1.05;text-shadow:0 2px 10px rgba(0,0,0,.7)}
+.tag{position:absolute;top:8px;left:8px;background:rgba(18,10,26,.75);font-size:11px;font-weight:600;padding:2px 7px;border-radius:999px}
+.card span{display:block;font-size:12.5px;color:var(--dust);margin-top:6px}
+.glow{position:absolute;inset:0;background:radial-gradient(circle at 70% 20%,rgba(255,255,255,.28),transparent 45%),linear-gradient(to top,rgba(18,10,26,.85),transparent 60%);pointer-events:none}
+.hero>*:not(.glow),.poster>*:not(.glow){position:relative}
+.foot{padding:22px 16px 28px;color:var(--dust);font-size:12.5px}
+
+/* PLAYER */
+#player{position:relative;overflow:hidden}
+#player.on{display:flex;flex-direction:column}
+.stage{flex:1;min-height:0;position:relative;overflow:hidden}
+.scene{position:absolute;inset:-12%;animation:drift 14s ease-in-out infinite alternate}
+.scene i{position:absolute;border-radius:50%;filter:blur(38px);opacity:.55;animation:float 9s ease-in-out infinite alternate}
+@keyframes drift{from{transform:scale(1) translate(0,0)}to{transform:scale(1.12) translate(-3%,2%)}}
+@keyframes float{from{transform:translate(0,0)}to{transform:translate(12%,-10%)}}
+.paused .scene,.paused .scene i{animation-play-state:paused}
+.shade{position:absolute;inset:0;background:linear-gradient(to bottom,rgba(18,10,26,.7),transparent 22%,transparent 50%,rgba(18,10,26,.88))}
+.ptop{position:absolute;top:0;left:0;right:0;padding:12px 14px;display:flex;align-items:center;gap:10px}
+.back{width:38px;height:38px;border-radius:50%;background:rgba(18,10,26,.6);font-size:20px;line-height:1}
+.ptitle{font-weight:700;font-size:15px;flex:1;min-width:0}
+.ptitle small{display:block;font-weight:500;color:var(--dust);font-size:12.5px}
+.placeholder{position:absolute;top:64px;left:14px;font-size:11.5px;color:var(--dust);background:rgba(18,10,26,.6);padding:3px 8px;border-radius:6px}
+.cap{position:absolute;left:18px;right:70px;bottom:120px;font-size:21px;font-weight:700;line-height:1.25;text-wrap:balance;text-shadow:0 2px 10px rgba(0,0,0,.9)}
+.cap em{font-style:normal;color:var(--marigold)}
+.namecard{position:absolute;left:18px;bottom:210px;border-left:3px solid var(--marigold);padding:2px 0 2px 10px;font-size:13px;color:var(--paper)}
+.namecard b{display:block;font-family:var(--display);font-weight:400;font-size:20px}
+.side{position:absolute;right:10px;bottom:120px;display:flex;flex-direction:column;gap:14px;align-items:center}
+.side button{width:46px;height:46px;border-radius:50%;background:rgba(18,10,26,.6);font-size:12px;font-weight:700}
+.tap{position:absolute;inset:60px 60px 110px 0}
+.bigplay{position:absolute;top:44%;left:50%;transform:translate(-50%,-50%);width:74px;height:74px;border-radius:50%;background:rgba(18,10,26,.65);font-size:28px;display:none;align-items:center;justify-content:center;pointer-events:none}
+.paused .bigplay{display:flex}
+.pbot{position:absolute;left:0;right:0;bottom:0;padding:0 14px 14px}
+.bar{height:4px;background:rgba(246,236,223,.25);border-radius:4px;overflow:hidden}
+.bar div{height:100%;width:0;background:var(--marigold)}
+.ctl{display:flex;justify-content:space-between;align-items:center;gap:10px;margin-top:10px}
+.ctl button{background:rgba(18,10,26,.6);border:1px solid var(--line);border-radius:999px;padding:8px 14px;font-size:14px;font-weight:600}
+.ctl .next{background:var(--marigold);color:#1b1026;border-color:var(--marigold)}
+.auto{font-size:13px;color:var(--dust);display:flex;align-items:center;gap:6px}
+.auto input{accent-color:var(--marigold);width:16px;height:16px}
+
+/* SHEETS */
+.scrim{position:absolute;inset:0;background:rgba(10,5,15,.72);display:none;align-items:flex-end;z-index:5}
+.scrim.on{display:flex}
+.sheet{width:100%;max-height:92%;overflow-y:auto;background:var(--velvet);border-top:1px solid var(--line);border-radius:18px 18px 0 0;padding:16px 16px 20px}
+.sheet h4{font-family:var(--display);font-weight:400;font-size:24px;line-height:1.1;margin:0 0 4px;text-wrap:balance}
+.sheet .sub{color:var(--dust);font-size:14px;margin:0 0 14px}
+.opt{display:flex;width:100%;text-align:left;gap:12px;align-items:center;border:1px solid var(--line);border-radius:12px;padding:12px;margin-bottom:9px;background:rgba(27,16,38,.6)}
+.opt.best{border-color:var(--marigold);background:rgba(245,165,36,.1)}
+.opt .t{flex:1;min-width:0}
+.opt .t b{display:block;font-size:15.5px}
+.opt .t span{font-size:13px;color:var(--dust)}
+.opt .p{font-weight:700;font-size:16px;font-variant-numeric:tabular-nums;white-space:nowrap}
+.opt .p.free{color:var(--leaf)}
+.opt[disabled]{opacity:.45;cursor:not-allowed}
+.close{display:block;margin:6px auto 0;color:var(--dust);font-size:14px;padding:8px 14px}
+.grid{display:grid;grid-template-columns:repeat(6,1fr);gap:8px;margin:12px 0}
+.grid button{aspect-ratio:1;border-radius:9px;border:1px solid var(--line);font-weight:600;font-size:14px;font-variant-numeric:tabular-nums;position:relative}
+.grid button.free{background:rgba(63,191,138,.14);border-color:rgba(63,191,138,.5)}
+.grid button.open{background:rgba(245,165,36,.14);border-color:rgba(245,165,36,.55)}
+.grid button.lock{color:var(--dust)}
+.grid button.lock::after{content:"";position:absolute;right:4px;top:4px;width:6px;height:6px;border-radius:50%;background:var(--sindoor)}
+.grid button.now{outline:2px solid var(--paper);outline-offset:1px}
+.key{display:flex;gap:14px;flex-wrap:wrap;font-size:12.5px;color:var(--dust)}
+.key i{display:inline-block;width:9px;height:9px;border-radius:3px;margin-right:5px}
+.pay{border:1px dashed var(--line);border-radius:12px;padding:14px;margin:6px 0 12px;font-size:14px}
+.pay .amt{font-family:var(--display);font-size:34px;line-height:1;margin:4px 0 8px}
+.wide{width:100%;background:var(--marigold);color:#1b1026;font-weight:700;border-radius:999px;padding:12px;font-size:16px}
+.note{font-size:12.5px;color:var(--dust);margin:10px 0 0}
+.adbox{height:150px;border-radius:12px;background:repeating-linear-gradient(45deg,#33214a,#33214a 12px,#2a1a3a 12px,#2a1a3a 24px);display:flex;align-items:center;justify-content:center;flex-direction:column;gap:6px;margin-bottom:12px}
+.adbox b{font-family:var(--display);font-weight:400;font-size:40px}
+.toast{position:absolute;left:50%;top:54px;transform:translateX(-50%);background:var(--leaf);color:#0d231a;font-weight:700;font-size:14px;padding:8px 14px;border-radius:999px;z-index:9;display:none;white-space:nowrap;max-width:92%;overflow:hidden;text-overflow:ellipsis}
+.toast.on{display:block}
+.me dl{margin:0;display:grid;grid-template-columns:1fr auto;gap:8px 12px;font-size:14.5px}
+.me dt{color:var(--dust)}
+.me dd{margin:0;font-weight:600;text-align:right;font-variant-numeric:tabular-nums}
+@media (prefers-reduced-motion:reduce){.scene,.scene i{animation:none}}
+</style>
+</head>
+<body>
+<div class="app" id="app">
+  <div class="ribbon"><span>Demo. Sample pictures, no real video or payments.</span><button id="resetBtn" type="button">Reset</button></div>
+  <div class="toast" id="toast" role="status"></div>
+
+  <!-- HOME -->
+  <main class="view on" id="home">
+    <div class="top">
+      <div class="brand">NATAK<small>Placeholder name. Your brand goes here.</small></div>
+      <button class="pill" id="acctBtn" type="button">Free plan</button>
+    </div>
+    <button class="hero" id="hero" type="button"></button>
+    <section class="shelf"><h3>Continue from episode 1</h3><div class="row" id="rowAll"></div></section>
+    <section class="shelf"><h3>Hidden identity</h3><div class="row" id="rowHidden"></div></section>
+    <section class="shelf"><h3>Revenge and comeback</h3><div class="row" id="rowRevenge"></div></section>
+    <p class="foot">Episodes 1 to 8 of every show are free. Tap any show to try the paywall at episode 9.</p>
+  </main>
+
+  <!-- PLAYER -->
+  <section class="view" id="player">
+    <div class="stage" id="stage">
+      <div class="scene" id="scene"></div>
+      <div class="shade"></div>
+      <div class="tap" id="tap" role="button" tabindex="0" aria-label="Pause or play"></div>
+      <div class="bigplay" aria-hidden="true">&#9654;</div>
+      <div class="ptop">
+        <button class="back" id="backBtn" type="button" aria-label="Back to home">&#8249;</button>
+        <div class="ptitle"><span id="pShow"></span><small id="pEp"></small></div>
+      </div>
+      <div class="placeholder">Sample picture standing in for the video. Each episode runs 12 s here.</div>
+      <div class="namecard" id="namecard"></div>
+      <div class="cap" id="cap"></div>
+      <div class="side">
+        <button id="listBtn" type="button" aria-label="All episodes">EP</button>
+        <button id="shareBtn" type="button" aria-label="Share this show">Share</button>
+      </div>
+      <div class="pbot">
+        <div class="bar"><div id="prog"></div></div>
+        <div class="ctl">
+          <label class="auto" for="autoplay"><input type="checkbox" id="autoplay" checked> Autoplay next</label>
+          <button class="next" id="nextBtn" type="button">Next episode &#8250;</button>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- SHEET -->
+  <div class="scrim" id="scrim"><div class="sheet" id="sheet" role="dialog" aria-modal="true"></div></div>
+</div>
+
+<script>
+(function(){
+"use strict";
+var FREE = 8, EP_MS = 12000, AD_CAP = 5;
+var PRICE = { ep: 5, pass: 149, quarter: 399 };
+
+var SHOWS = [
+ { id:"ichcha", title:"Ichchadhari Ki Dulhan", eps:50, genre:"Fantasy", shelf:["hidden"], c:["#0f6b5c","#7a1f6b","#f5a524"],
+   line:"Sold into a cursed royal family, she finds out what her husband becomes on the new moon.",
+   who:["Meera","The bride nobody asked"],
+   caps:["They sold me for <em>forty lakh</em>.","Nobody in this palace looks at the groom.","\"Do not open his door on <em>amavasya</em>.\"","Her mangalsutra starts to <em>glow</em>.","His eyes turn to <em>slits</em>."] },
+ { id:"naukar", title:"Naukar Nahi, Malik Hoon", eps:60, genre:"Hidden identity", shelf:["hidden","revenge"], c:["#8a2a12","#3a1552","#f5a524"],
+   line:"The family driver they mock at the engagement has just bought all their debt.",
+   who:["Arjun","Driver, Rathore Palace Hotel"],
+   caps:["\"Drivers eat <em>outside</em>.\"","He picks the glass off the floor himself.","One call: \"Buy the <em>whole</em> loan.\"","The bank file reaches the stage.","He signs the <em>foreclosure</em> in front of them."] },
+ { id:"bahu", title:"Bahu Number 2", eps:70, genre:"Comeback", shelf:["revenge"], c:["#a31f4a","#2b1a5a","#f5a524"],
+   line:"Thrown out with her son, she returns seven years later as the company's new MD.",
+   who:["Kavya","The bahu they threw out"],
+   caps:["Seven years ago they kept her <em>bangles</em>.","Today the board waits for the new MD.","\"Madam is here.\" Every chair turns.","Her ex-husband drops his pen.","Her son looks up: \"<em>Papa?</em>\""] },
+ { id:"janam", title:"Pichhla Janam", eps:60, genre:"Second chance", shelf:["revenge"], c:["#1d4f8a","#5a1747","#f5a524"],
+   line:"Killed by her best friend and fiance, she wakes up a year earlier.",
+   who:["Riya","Intern, one year too early"],
+   caps:["The last thing she saw was <em>her friend's smile</em>.","She wakes up. The calendar is wrong.","Same office. Same lift. Same day.","He walks in with the same line ready.","She <em>slaps</em> him before he speaks."] },
+ { id:"akhada", title:"Akhada Ka Raja", eps:55, genre:"Hidden identity", shelf:["hidden"], c:["#7a5a10","#3b1f1f","#f5a524"],
+   line:"A quiet wrestling coach is the national champion who vanished after a scandal.",
+   who:["Balwan","Coach, village akhada"],
+   caps:["\"Old man, <em>clean the mat</em>.\"","His daughter clenches her fists.","An old medal falls out of the trunk.","The politician's son steps into the ring.","\"<em>Mere papa ko koi nahi hara sakta.</em>\""] }
+];
+
+var S; // state
+function fresh(){ return { open:{}, pass:{}, vip:false, adsLeft:AD_CAP, spent:0, cur:null, ep:1 }; }
+S = fresh();
+
+var $ = function(id){ return document.getElementById(id); };
+function esc(s){ return String(s).replace(/[&<>"]/g,function(c){return {"&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;"}[c];}); }
+function show(id){ return SHOWS.filter(function(s){return s.id===id;})[0]; }
+function bg(c){ return "linear-gradient(155deg,"+c[0]+","+c[1]+")"; }
+function canWatch(sid, ep){ return ep<=FREE || S.vip || S.pass[sid] || (S.open[sid] && S.open[sid][ep]); }
+function unlock(sid, ep){ (S.open[sid] = S.open[sid] || {})[ep] = true; }
+
+/* ---------- HOME ---------- */
+function card(s){
+  return '<button class="card" type="button" data-show="'+s.id+'"><div class="poster" style="background:'+bg(s.c)+'"><div class="glow"></div><span class="tag">'+esc(s.genre)+'</span><b>'+esc(s.title)+'</b></div><span>'+s.eps+' episodes, '+FREE+' free</span></button>';
+}
+function renderHome(){
+  var h = SHOWS[0];
+  $("hero").style.background = bg(h.c);
+  $("hero").setAttribute("data-show", h.id);
+  $("hero").innerHTML = '<div class="glow"></div><h2>'+esc(h.title)+'</h2><p>'+esc(h.line)+'</p><span class="cta">&#9654; Watch episode 1 free</span>';
+  $("rowAll").innerHTML = SHOWS.map(card).join("");
+  $("rowHidden").innerHTML = SHOWS.filter(function(s){return s.shelf.indexOf("hidden")>-1;}).map(card).join("");
+  $("rowRevenge").innerHTML = SHOWS.filter(function(s){return s.shelf.indexOf("revenge")>-1;}).map(card).join("");
+  var a = $("acctBtn");
+  a.textContent = S.vip ? "Subscribed" : "Free plan";
+  a.className = "pill" + (S.vip ? " vip" : "");
+}
+function go(view){
+  $("home").classList.toggle("on", view==="home");
+  $("player").classList.toggle("on", view==="player");
+  if(view==="home"){ stop(); renderHome(); }
+}
+
+/* ---------- PLAYER ---------- */
+var raf = null, startAt = 0, elapsed = 0, paused = false;
+function stop(){ if(raf){ cancelAnimationFrame(raf); raf = null; } }
+function play(sid, ep){
+  var s = show(sid);
+  if(ep > s.eps){ closeSheet(); toast("That was the last episode"); go("home"); return; }
+  if(!canWatch(sid, ep)){ S.cur = sid; S.ep = ep; drawStage(s, ep, true); paywall(); return; }
+  S.cur = sid; S.ep = ep;
+  closeSheet(); go("player"); drawStage(s, ep, false);
+  elapsed = 0; paused = false; $("stage").classList.remove("paused");
+  startAt = performance.now(); stop(); raf = requestAnimationFrame(tick);
+}
+function drawStage(s, ep, frozen){
+  go2player();
+  $("pShow").textContent = s.title;
+  $("pEp").textContent = "Episode " + ep + " of " + s.eps + (ep<=FREE ? " · Free" : "");
+  var sc = $("scene"); sc.style.background = bg(s.c);
+  sc.innerHTML = '<i style="width:60%;height:38%;left:-8%;top:8%;background:'+s.c[2]+'"></i><i style="width:55%;height:40%;right:-10%;bottom:14%;background:'+s.c[0]+';animation-delay:-4s"></i><i style="width:40%;height:28%;left:30%;top:40%;background:#fff;opacity:.16;animation-delay:-2s"></i>';
+  $("namecard").innerHTML = ep===1 ? '<b>'+esc(s.who[0])+'</b>'+esc(s.who[1]) : "";
+  $("namecard").style.display = ep===1 ? "block" : "none";
+  $("cap").innerHTML = s.caps[0];
+  $("prog").style.width = "0%";
+  if(frozen){ stop(); $("stage").classList.add("paused"); }
+}
+function go2player(){ $("home").classList.remove("on"); $("player").classList.add("on"); }
+function tick(now){
+  if(!paused){ elapsed += now - startAt; }
+  startAt = now;
+  var s = show(S.cur), f = Math.min(1, elapsed / EP_MS);
+  $("prog").style.width = (f*100).toFixed(1) + "%";
+  var i = Math.min(s.caps.length-1, Math.floor(f * s.caps.length));
+  if($("cap").getAttribute("data-i") !== String(i)){ $("cap").setAttribute("data-i", i); $("cap").innerHTML = s.caps[i]; }
+  if(f >= 1){
+    raf = null;
+    if($("autoplay").checked){ play(S.cur, S.ep + 1); }
+    else { paused = true; $("stage").classList.add("paused"); }
+    return;
+  }
+  raf = requestAnimationFrame(tick);
+}
+function togglePause(){
+  if(!raf && elapsed >= EP_MS){ play(S.cur, S.ep); return; }
+  paused = !paused; $("stage").classList.toggle("paused", paused);
+}
+
+/* ---------- SHEETS ---------- */
+function openSheet(html){ $("sheet").innerHTML = html; $("scrim").classList.add("on"); var b = $("sheet").querySelector("button"); if(b){ b.focus(); } }
+function closeSheet(){ $("scrim").classList.remove("on"); $("sheet").innerHTML = ""; }
+var toastT;
+function toast(msg){ var t = $("toast"); t.textContent = msg; t.classList.add("on"); clearTimeout(toastT); toastT = setTimeout(function(){ t.classList.remove("on"); }, 2600); }
+
+function paywall(){
+  var s = show(S.cur), left = s.eps - S.ep + 1, noAds = S.adsLeft <= 0;
+  openSheet(
+    '<h4>Episode '+S.ep+' is locked</h4>'+
+    '<p class="sub">'+esc(s.title)+'. '+left+' episodes left. Pick a way to keep watching.</p>'+
+    '<button class="opt" type="button" data-act="ad"'+(noAds?' disabled':'')+'><div class="t"><b>Watch an ad</b><span>Opens this episode. '+S.adsLeft+' of '+AD_CAP+' left today.</span></div><div class="p free">Free</div></button>'+
+    '<button class="opt" type="button" data-act="share"><div class="t"><b>Send to a friend</b><span>Opens the next 3 episodes when they join.</span></div><div class="p free">Free</div></button>'+
+    '<button class="opt" type="button" data-act="buy" data-kind="ep"><div class="t"><b>This episode only</b><span>One tap by UPI.</span></div><div class="p">₹'+PRICE.ep+'</div></button>'+
+    '<button class="opt best" type="button" data-act="buy" data-kind="pass"><div class="t"><b>Whole show pass</b><span>All '+s.eps+' episodes of this show, yours to rewatch.</span></div><div class="p">₹'+PRICE.pass+'</div></button>'+
+    '<button class="opt" type="button" data-act="buy" data-kind="quarter"><div class="t"><b>Every show, 3 months</b><span>UPI Autopay. Reminder before each renewal, cancel in one tap.</span></div><div class="p">₹'+PRICE.quarter+'</div></button>'+
+    '<button class="close" type="button" data-act="home">Not now</button>'
+  );
+}
+function payScreen(kind){
+  var s = show(S.cur);
+  var label = kind==="ep" ? "Episode "+S.ep+" of "+s.title : kind==="pass" ? "Whole show pass: "+s.title : "All shows for 3 months";
+  openSheet(
+    '<h4>Pay by UPI</h4><p class="sub">'+esc(label)+'</p>'+
+    '<div class="pay">Amount<div class="amt">₹'+PRICE[kind]+'</div>Demo checkout. No money moves and no UPI app opens.</div>'+
+    '<button class="wide" type="button" data-act="paid" data-kind="'+kind+'">Pretend payment succeeded</button>'+
+    '<button class="close" type="button" data-act="paywall">Back</button>'
+  );
+}
+var adT;
+function adScreen(){
+  var n = 5;
+  openSheet('<h4>Ad break</h4><p class="sub">A real ad would play here.</p><div class="adbox"><span>Episode opens in</span><b id="adN">'+n+'</b></div><p class="note">Demo: no ad network is connected.</p>');
+  clearInterval(adT);
+  adT = setInterval(function(){
+    n--; var el = $("adN"); if(!el){ clearInterval(adT); return; }
+    el.textContent = n;
+    if(n <= 0){ clearInterval(adT); S.adsLeft--; unlock(S.cur, S.ep); toast("Episode "+S.ep+" opened"); play(S.cur, S.ep); }
+  }, 1000);
+}
+function shareScreen(fromPaywall){
+  var s = show(S.cur);
+  openSheet(
+    '<h4>Send this show</h4><p class="sub">In the real app this opens WhatsApp with your own invite link.</p>'+
+    '<div class="pay">"'+esc(s.title)+'" is free till episode '+FREE+'. Watch it with me.</div>'+
+    (fromPaywall
+      ? '<button class="wide" type="button" data-act="shared">Pretend my friend joined</button><p class="note">The 3 episodes open only after the friend installs, so shares cannot be faked.</p>'
+      : '<p class="note">Share from the paywall to open 3 episodes for free.</p>')+
+    '<button class="close" type="button" data-act="'+(fromPaywall?'paywall':'resume')+'">Back</button>'
+  );
+}
+function listScreen(){
+  var s = show(S.cur), h = "";
+  for(var e=1; e<=s.eps; e++){
+    var cls = e<=FREE ? "free" : canWatch(s.id, e) ? "open" : "lock";
+    h += '<button type="button" class="'+cls+(e===S.ep?" now":"")+'" data-act="ep" data-ep="'+e+'" aria-label="Episode '+e+(cls==="lock"?", locked":"")+'">'+e+'</button>';
+  }
+  openSheet('<h4>'+esc(s.title)+'</h4><p class="sub">'+esc(s.line)+'</p><div class="key"><span><i style="background:var(--leaf)"></i>Free</span><span><i style="background:var(--marigold)"></i>Opened</span><span><i style="background:var(--sindoor)"></i>Locked</span></div><div class="grid">'+h+'</div><button class="close" type="button" data-act="resume">Close</button>');
+}
+function acctScreen(){
+  var passes = Object.keys(S.pass).map(function(k){ return show(k).title; });
+  var n = 0; Object.keys(S.open).forEach(function(k){ n += Object.keys(S.open[k]).length; });
+  openSheet('<h4>My account</h4><p class="sub">What this demo viewer has so far.</p><div class="me"><dl>'+
+    '<dt>Plan</dt><dd>'+(S.vip?"All shows, 3 months":"Free")+'</dd>'+
+    '<dt>Show passes</dt><dd>'+(passes.length?esc(passes.join(", ")):"None")+'</dd>'+
+    '<dt>Single episodes opened</dt><dd>'+n+'</dd>'+
+    '<dt>Ad unlocks left today</dt><dd>'+S.adsLeft+' of '+AD_CAP+'</dd>'+
+    '<dt>Spent in this demo</dt><dd>₹'+S.spent+'</dd></dl></div>'+
+    '<button class="close" type="button" data-act="close">Close</button>');
+}
+
+/* ---------- EVENTS ---------- */
+document.addEventListener("click", function(ev){
+  var t = ev.target.closest("[data-show]");
+  if(t){ play(t.getAttribute("data-show"), 1); return; }
+  var a = ev.target.closest("[data-act]");
+  if(!a || a.disabled){ return; }
+  var act = a.getAttribute("data-act"), kind = a.getAttribute("data-kind");
+  if(act==="ad"){ adScreen(); }
+  else if(act==="share"){ shareScreen(true); }
+  else if(act==="buy"){ payScreen(kind); }
+  else if(act==="paywall"){ paywall(); }
+  else if(act==="home"){ closeSheet(); go("home"); }
+  else if(act==="close"){ closeSheet(); }
+  else if(act==="resume"){ closeSheet(); if(canWatch(S.cur,S.ep)){ paused = false; $("stage").classList.remove("paused"); } else { paywall(); } }
+  else if(act==="ep"){ play(S.cur, parseInt(a.getAttribute("data-ep"),10)); }
+  else if(act==="shared"){ for(var i=0;i<3;i++){ unlock(S.cur, S.ep+i); } toast("3 episodes opened"); play(S.cur, S.ep); }
+  else if(act==="paid"){
+    S.spent += PRICE[kind];
+    if(kind==="ep"){ unlock(S.cur, S.ep); toast("Episode "+S.ep+" opened"); }
+    else if(kind==="pass"){ S.pass[S.cur] = true; toast("Whole show opened"); }
+    else { S.vip = true; toast("Every show opened for 3 months"); }
+    play(S.cur, S.ep);
+  }
+});
+$("backBtn").addEventListener("click", function(){ go("home"); });
+$("nextBtn").addEventListener("click", function(){ play(S.cur, S.ep + 1); });
+$("tap").addEventListener("click", togglePause);
+$("tap").addEventListener("keydown", function(e){ if(e.key===" "||e.key==="Enter"){ e.preventDefault(); togglePause(); } });
+$("listBtn").addEventListener("click", function(){ paused = true; $("stage").classList.add("paused"); listScreen(); });
+$("shareBtn").addEventListener("click", function(){ paused = true; $("stage").classList.add("paused"); shareScreen(false); });
+$("acctBtn").addEventListener("click", acctScreen);
+$("resetBtn").addEventListener("click", function(){ clearInterval(adT); S = fresh(); closeSheet(); go("home"); toast("Demo reset"); });
+$("scrim").addEventListener("click", function(e){ if(e.target === $("scrim") && S.cur && canWatch(S.cur,S.ep)){ closeSheet(); } });
+
+renderHome();
+})();
+</script>
+</body>
+</html>
