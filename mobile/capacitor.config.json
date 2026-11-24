@@ -1,0 +1,7 @@
+{
+  "appId": "com.aidadaji.natak",
+  "appName": "Natak",
+  "webDir": "www",
+  "server": { "url": "https://aidadaji.com/natak/?src=android", "allowNavigation": ["aidadaji.com"] },
+  "android": { "backgroundColor": "#1b1026" }
+}
