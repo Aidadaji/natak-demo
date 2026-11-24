@@ -210,13 +210,16 @@ function state(array $u): array {
     foreach ($q as $r) $open[$r['show_id']][] = (int) $r['ep'];
     $vids = [];
     foreach (db()->query('SELECT show_id, ep, video_file FROM episodes WHERE video_file IS NOT NULL') as $r) if (video_path($r['video_file'])) $vids[$r['show_id']][] = (int) $r['ep'];
+    $titles = [];
+    foreach (db()->query('SELECT show_id, ep, title FROM ep_meta') as $r) $titles[$r['show_id']][(int) $r['ep']] = $r['title'];
     $shows = [];
     foreach (db()->query('SELECT * FROM shows ORDER BY sort') as $s) {
         $id = $s['id'];
         $shows[] = ['id' => $id, 'title' => $s['title'], 'genre' => $s['genre'], 'line' => $s['line'], 'eps' => (int) $s['eps'], 'free' => (int) $s['free_eps'],
             'c' => [$s['c0'], $s['c1']], 'who' => json_decode($s['who'], true), 'caps' => json_decode($s['caps'], true), 'shelf' => explode(',', (string) $s['shelf']),
             'views' => (int) ($views[$id] ?? 0), 'likes' => (int) ($likes[$id] ?? 0), 'saves' => (int) ($saves[$id] ?? 0), 'shares' => (int) ($shares[$id] ?? 0),
-            'liked' => isset($liked[$id]), 'saved' => isset($saved[$id]), 'pass' => isset($pass[$id]), 'open' => $open[$id] ?? [], 'videos' => $vids[$id] ?? [], 'last' => (int) ($last[$id] ?? 0)];
+            'liked' => isset($liked[$id]), 'saved' => isset($saved[$id]), 'pass' => isset($pass[$id]), 'open' => $open[$id] ?? [], 'videos' => $vids[$id] ?? [], 'last' => (int) ($last[$id] ?? 0),
+            'poster' => poster_path($id) ? 'poster.php?show=' . $id . '&v=' . filemtime(poster_path($id)) : null, 'titles' => (object) ($titles[$id] ?? [])];
     }
     return ['me' => ['guest' => (bool) $u['is_guest'], 'name' => $u['name'], 'vip' => (int) $u['vip_until'] > now(), 'vipUntil' => (int) $u['vip_until'],
         'adsLeft' => ads_left($u), 'adCap' => AD_CAP, 'credits' => (int) $u['credits'], 'ref' => $u['is_guest'] ? null : $u['ref_code']],

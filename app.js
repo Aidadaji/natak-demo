@@ -11,6 +11,7 @@ function esc(s) { return String(s == null ? "" : s).replace(/[&<>"]/g, function 
 function fmt(n) { n = +n || 0; if (n < 1000) return String(n); if (n < 1e6) return (n / 1e3).toFixed(n < 1e4 ? 1 : 0).replace(/\.0$/, "") + "K"; return (n / 1e6).toFixed(1).replace(/\.0$/, "") + "M"; }
 function show(id) { for (var i = 0; i < ST.shows.length; i++) if (ST.shows[i].id === id) return ST.shows[i]; return null; }
 function bg(c) { return "linear-gradient(155deg," + c[0] + "," + c[1] + ")"; }
+function art(s) { return s.poster ? "linear-gradient(to top,rgba(18,10,26,.9),rgba(18,10,26,.05) 60%),url(" + s.poster + ") center/cover no-repeat," + bg(s.c) : bg(s.c); }
 function canWatch(s, e) { return e <= s.free || ST.me.vip || s.pass || s.open.indexOf(e) > -1; }
 function inPlayer() { return $("player").classList.contains("on"); }
 
@@ -34,11 +35,11 @@ function oops(e) { toast(e.message || "Something went wrong.", true); }
 
 /* ---------- HOME ---------- */
 function card(s, label, e) {
-  return '<button class="card" type="button" data-show="' + s.id + '" data-ep="' + (e || 1) + '"><div class="poster" style="background:' + bg(s.c) + '"><div class="glow"></div><span class="tag">' + esc(s.genre) + '</span><b>' + esc(s.title) + '</b></div><span>' + (label || s.eps + " episodes · " + fmt(s.views) + " views") + '</span></button>';
+  return '<button class="card" type="button" data-show="' + s.id + '" data-ep="' + (e || 1) + '"><div class="poster" style="background:' + art(s) + '"><div class="glow"></div><span class="tag">' + esc(s.genre) + '</span><b>' + esc(s.title) + '</b></div><span>' + (label || s.eps + " episodes · " + fmt(s.views) + " views") + '</span></button>';
 }
 function renderHome() {
   var h = ST.shows[0], me = ST.me;
-  $("hero").style.background = bg(h.c);
+  $("hero").style.background = art(h);
   $("hero").setAttribute("data-show", h.id); $("hero").setAttribute("data-ep", h.last || 1);
   $("hero").innerHTML = '<div class="glow"></div><h2>' + esc(h.title) + '</h2><p>' + esc(h.line) + '</p><span class="cta">&#9654; ' + (h.last ? "Continue episode " + h.last : "Watch episode 1 free") + '</span>';
   var by = function (f) { return ST.shows.filter(f); };
@@ -66,7 +67,7 @@ function updateSide() {
   var s = cur && show(cur); if (!s) return;
   $("likeBtn").classList.toggle("on", s.liked); $("likeN").textContent = fmt(s.likes);
   $("saveBtn").classList.toggle("on", s.saved); $("saveN").textContent = fmt(s.saves);
-  $("pEp").textContent = "Episode " + ep + " of " + s.eps + (ep <= s.free ? " · Free" : "") + " · " + fmt(s.views) + " views";
+  $("pEp").textContent = "Episode " + ep + " of " + s.eps + (s.titles[ep] ? " · " + s.titles[ep] : "") + (ep <= s.free ? " · Free" : "") + " · " + fmt(s.views) + " views";
 }
 function drawStage(s, e) {
   $("home").classList.remove("on"); $("player").classList.add("on");

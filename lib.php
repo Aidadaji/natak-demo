@@ -53,6 +53,7 @@ function db(): PDO {
       CREATE TABLE IF NOT EXISTS settings(k TEXT PRIMARY KEY, v TEXT);
     ');
     if (!$pdo->query('SELECT COUNT(*) FROM shows')->fetchColumn()) seed($pdo);
+    migrate($pdo);
     return $pdo;
 }
 
@@ -163,4 +164,56 @@ function video_path(string $file): ?string {
     if (str_starts_with($file, 'bundle:')) $p = __DIR__ . '/media/' . basename(substr($file, 7));
     else $p = data_dir() . '/videos/' . basename($file);
     return is_file($p) ? $p : null;
+}
+
+/* ---------- Thornbound, season 1 (his own series; files live in his Google Drive) ---------- */
+const THORNBOUND = [
+  1 => ['The Ninth Assassin', '1ss7SUOcozIpdW8YRoyo1JYdjkdKV8OKF', '1g5hzK1QFG0MEVakbepxNmWc9kxx_Tpcv'],
+  2 => ["Say You're Mine", '1ZCFlpnRnRH5D1XpoIkyoRxIpJaTdA-PM', '1bcKG_yBujsbujuUiW09XkbjeB_ucDyKE'],
+  3 => ['The Black Mirror', '16Gr7C0ZDR3wLkWsGPtMRfi1odo1CCbC4', '1zM8Pr-r3WYCFo46fK3HOKSTzkHUWD455'],
+  4 => ['The Garden of Ash', '1rBaHBvdwHyel27xEf-bIQzUY-T8S69HJ', '1BIdtPx8XBzpou_P7887AuOyXeKT5HRfN'],
+  5 => ['Moon Blood', '1mxdTosICV0B9HM2sVah_WjKH0jyFJ2NF', '1lhDJo6VovPQNg8kJSY3x3aEhGiXAU8pK'],
+  6 => ['The Thorn Ring', '1oDcF7l7LMT6dO_U6FsbDP2ApwJv9OqdB', '1by-1Va_JXXTcaF81wP_v70mCm1BUB_1m'],
+  7 => ['Ashvale', '1i5ZBC08T_vGh_4AU5xhF5JxiNf4muIUT', '1Hgi50uJEc_NBQQKZhMIllCiMVADN-eUY'],
+  8 => ["The Witch's Gift", '138j5L157NmgnPARflrUATzNIORZ2xbcB', '1RrTRvRd0glhyH0L4SRJvK4-OiKv0Dhwv'],
+  9 => ['Blood on the Throne', '1z7sdhFShQHrGE_8W-oDlkDvxZnQoUj8s', '1fD0SG_awS7MgRRaF9zv45ciz8m6YXR7V'],
+  10 => ['Hello, Daughter', '13Mx-TybzGaIiKkqyy2v70ag5_ica-KKY', '1wdwvR9Hmp4xX13f6oP7D4PP2Vl9MyBoP'],
+];
+
+function migrate(PDO $pdo): void {
+    $pdo->exec('CREATE TABLE IF NOT EXISTS ep_meta(show_id TEXT, ep INTEGER, title TEXT, PRIMARY KEY(show_id, ep))');
+    $q = $pdo->prepare('SELECT 1 FROM shows WHERE id=?'); $q->execute(['thornbound']);
+    if ($q->fetchColumn()) return;
+    $pdo->prepare('INSERT INTO shows(id,title,genre,line,eps,free_eps,c0,c1,who,caps,shelf,sort) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)')->execute([
+        'thornbound', 'Thornbound', 'Dark fantasy', 'She was sent to kill the Thorn King. His touch turns every living thing to ash, except her.', 10, 5, '#5a0f24', '#150a22',
+        json_encode(['Lyra', 'The ninth assassin']),
+        json_encode(['She slips into the <em>Thorn King\'s</em> chamber.', 'He catches her blade with his cursed hand.', 'She does not turn to <em>ash</em>.', 'The door creaks open on torchlight.', '"Tell him you\'re <em>mine</em>."']),
+        'fantasy', -1]);
+    $m = $pdo->prepare('INSERT OR IGNORE INTO ep_meta(show_id, ep, title) VALUES(?,?,?)');
+    foreach (THORNBOUND as $n => $e) $m->execute(['thornbound', $n, $e[0]]);
+}
+
+function poster_path(string $show): ?string {
+    $p = data_dir() . '/posters/' . preg_replace('/[^a-z0-9_-]/', '', $show) . '.jpg';
+    return is_file($p) ? $p : null;
+}
+
+/** Pull a link-shared Google Drive file straight onto this server. Returns null on success or a reason. */
+function drive_fetch(string $id, string $dest, int $maxBytes): ?string {
+    if (!preg_match('/^[A-Za-z0-9_-]{20,80}$/', $id)) return 'That does not look like a Google Drive file link.';
+    if (!function_exists('curl_init')) return 'This hosting has no download tool (curl) switched on.';
+    $fh = fopen($dest, 'wb');
+    if (!$fh) return 'Could not write to storage.';
+    $ch = curl_init('https://drive.usercontent.google.com/download?id=' . $id . '&export=download&confirm=t');
+    curl_setopt_array($ch, [CURLOPT_FILE => $fh, CURLOPT_FOLLOWLOCATION => true, CURLOPT_MAXREDIRS => 5,
+        CURLOPT_PROTOCOLS => CURLPROTO_HTTPS, CURLOPT_REDIR_PROTOCOLS => CURLPROTO_HTTPS,
+        CURLOPT_CONNECTTIMEOUT => 15, CURLOPT_TIMEOUT => 170, CURLOPT_USERAGENT => 'Mozilla/5.0 (natak import)',
+        CURLOPT_NOPROGRESS => false,
+        CURLOPT_PROGRESSFUNCTION => function ($c, $dt, $dn) use ($maxBytes) { return $dn > $maxBytes ? 1 : 0; }]);
+    $ok = curl_exec($ch);
+    $code = (int) curl_getinfo($ch, CURLINFO_RESPONSE_CODE);
+    $err = curl_error($ch);
+    curl_close($ch); fclose($fh);
+    if (!$ok || $code !== 200) { @unlink($dest); return $code === 404 ? 'Google Drive says the file was not found.' : ($code === 401 || $code === 403 ? 'Google Drive refused. Share the file as "Anyone with the link".' : 'Download failed (' . ($err ?: 'status ' . $code) . ').'); }
+    return null;
 }

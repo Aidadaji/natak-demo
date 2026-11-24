@@ -64,6 +64,35 @@ try {
             if ($f && !str_starts_with($f, 'bundle:')) @unlink(data_dir() . '/videos/' . basename($f));
             db()->prepare('DELETE FROM episodes WHERE show_id=? AND ep=?')->execute([$show['id'], $ep]);
             $msg = 'Video removed from episode ' . $ep . '.';
+        } elseif ($act === 'import') {
+            @set_time_limit(240);
+            $link = trim((string) ($_POST['link'] ?? ''));
+            $id = preg_match('~(?:/d/|[?&]id=)([A-Za-z0-9_-]{20,80})~', $link, $mm) ? $mm[1] : $link;
+            if ($show && $show['id'] === 'thornbound' && $link === '' && isset(THORNBOUND[$ep])) $id = THORNBOUND[$ep][1];
+            if (!$show || $ep < 1 || $ep > (int) $show['eps']) $err = 'Pick a show and a valid episode number.';
+            else {
+                $name = bin2hex(random_bytes(10)) . '.mp4';
+                $dest = data_dir() . '/videos/' . $name;
+                $why = drive_fetch($id, $dest, 400 * 1048576);
+                if (!$why) {
+                    $mime = (new finfo(FILEINFO_MIME_TYPE))->file($dest);
+                    if (!in_array($mime, ['video/mp4', 'video/webm', 'video/quicktime'], true)) { @unlink($dest); $why = str_starts_with((string) $mime, 'text/') ? 'Google Drive sent a web page, not the video. Share the file as "Anyone with the link" and try again.' : 'That file is not an MP4 or WebM video.'; }
+                }
+                if ($why) $err = 'Episode ' . $ep . ': ' . $why;
+                else {
+                    $q = db()->prepare('SELECT video_file FROM episodes WHERE show_id=? AND ep=?'); $q->execute([$show['id'], $ep]);
+                    $old = (string) $q->fetchColumn();
+                    if ($old && !str_starts_with($old, 'bundle:')) @unlink(data_dir() . '/videos/' . basename($old));
+                    db()->prepare('INSERT INTO episodes(show_id,ep,video_file) VALUES(?,?,?) ON CONFLICT(show_id,ep) DO UPDATE SET video_file=excluded.video_file')->execute([$show['id'], $ep, $name]);
+                    $msg = h($show['title']) . ' episode ' . $ep . ' imported (' . round(filesize($dest) / 1048576, 1) . ' MB).';
+                    if ($show['id'] === 'thornbound' && $ep === 1 && !poster_path('thornbound')) {   // episode 1 thumbnail becomes the show poster
+                        @mkdir(data_dir() . '/posters', 0700, true);
+                        $pd = data_dir() . '/posters/thornbound.jpg';
+                        if (drive_fetch(THORNBOUND[1][2], $pd, 5 * 1048576) || (new finfo(FILEINFO_MIME_TYPE))->file($pd) !== 'image/jpeg') @unlink($pd);
+                    }
+                }
+            }
+            if (!empty($_POST['ajax'])) { header('Content-Type: application/json'); echo json_encode(['ok' => !$err, 'msg' => $err ?: strip_tags($msg)]); exit; }
         } elseif ($act === 'upload') {
             $f = $_FILES['video'] ?? null;
             if (!$show || $ep < 1 || $ep > (int) $show['eps']) $err = 'Pick a show and a valid episode number.';
@@ -159,6 +188,32 @@ a{color:var(--marigold)}
     <label for="uf">Video file (vertical MP4 works best)</label><input id="uf" type="file" name="video" accept="video/mp4,video/webm,video/quicktime" required>
     <p class="sub" style="margin:8px 0 0">Upload limit on this hosting: <?= h(ini_get('upload_max_filesize')) ?> per file. Uploading again replaces the episode's video.</p>
     <button type="submit">Upload</button></form>
+
+  <h2>Import from Google Drive</h2>
+  <div class="card">
+    <p class="sub" style="margin:0 0 4px">The files must be shared in Drive as "Anyone with the link". This server downloads them directly, so nothing passes through your phone.</p>
+    <button type="button" id="impAll">Import all 10 Thornbound episodes</button>
+    <div id="impLog" style="font-size:14px;margin-top:10px;white-space:pre-line" role="status"></div>
+  </div>
+  <form class="card" method="post"><input type="hidden" name="csrf" value="<?= $csrf ?>"><input type="hidden" name="act" value="import">
+    <div class="row"><div><label for="is">Show</label><select id="is" name="show"><?php foreach ($shows as $s): ?><option value="<?= h($s['id']) ?>"><?= h($s['title']) ?></option><?php endforeach; ?></select></div>
+    <div><label for="ie">Episode number</label><input id="ie" type="number" name="ep" min="1" value="1" required></div></div>
+    <label for="il">Google Drive link to one video file</label><input id="il" type="url" name="link" placeholder="https://drive.google.com/file/d/.../view" required>
+    <button type="submit">Import this one</button></form>
+  <script>
+  document.getElementById('impAll').addEventListener('click', async function () {
+    var b = this, log = document.getElementById('impLog'); b.disabled = true; log.textContent = '';
+    for (var ep = 1; ep <= 10; ep++) {
+      log.textContent += 'Episode ' + ep + ': downloading...\n';
+      var fd = new FormData(); fd.append('csrf', '<?= $csrf ?>'); fd.append('act', 'import'); fd.append('ajax', '1'); fd.append('show', 'thornbound'); fd.append('ep', ep);
+      var line;
+      try { var r = await fetch('admin.php', { method: 'POST', body: fd, credentials: 'same-origin' }); var d = await r.json(); line = (d.ok ? 'Done. ' : 'Failed. ') + d.msg; if (!d.ok) { log.textContent = log.textContent.replace(/[^\n]*\n$/, line + '\n') + 'Stopped. Fix the problem above and tap the button again.'; b.disabled = false; return; } }
+      catch (e) { log.textContent += 'Stopped: the server did not answer. Tap the button again to retry.'; b.disabled = false; return; }
+      log.textContent = log.textContent.replace(/[^\n]*\n$/, line + '\n');
+    }
+    log.textContent += 'All 10 imported. Reload this page to see them listed.'; b.disabled = false;
+  });
+  </script>
 
   <h2>Episodes that have a video</h2>
   <?php foreach ($shows as $s): if (empty($vids[$s['id']])) continue; ?>
