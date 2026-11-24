@@ -34,9 +34,9 @@ try {
         if (strlen($p) < 10) $err = 'Use at least 10 characters.';
         elseif ($p !== (string) ($_POST['password2'] ?? '')) $err = 'The two passwords do not match.';
         else {
-            db()->beginTransaction();
-            if (!setting('admin_hash')) { set_setting('admin_hash', password_hash($p, PASSWORD_DEFAULT)); db()->commit(); start_admin_session(); header('Location: admin.php'); exit; }
-            db()->rollBack(); $err = 'Admin was already set up.';
+            tx_begin();
+            if (!setting('admin_hash')) { set_setting('admin_hash', password_hash($p, PASSWORD_DEFAULT)); tx_commit(); start_admin_session(); header('Location: admin.php'); exit; }
+            tx_rollback(); $err = 'Admin was already set up.';
         }
     } elseif ($post && $hash && !$authed && $act === 'login') {
         $lock = (int) (setting('admin_lock') ?? 0);
@@ -56,8 +56,10 @@ try {
         if ($act === 'logout') { set_setting('admin_session', null); header('Location: admin.php'); exit; }
         elseif ($act === 'free' && $show) {
             $n = max(0, min((int) $show['eps'], (int) ($_POST['free'] ?? 8)));
-            db()->prepare('UPDATE shows SET free_eps=? WHERE id=?')->execute([$n, $show['id']]);
-            $msg = h($show['title']) . ": first $n episodes are now free.";
+            $c = max(1, min(500, (int) ($_POST['coins'] ?? $show['ep_coins'])));
+            $pr = max(0, min(5000, (int) ($_POST['pass'] ?? $show['pass_rs'])));
+            db()->prepare('UPDATE shows SET free_eps=?, ep_coins=?, pass_rs=? WHERE id=?')->execute([$n, $c, $pr, $show['id']]);
+            $msg = h($show['title']) . ": first $n episodes free, $c coins per locked episode, show pass Rs $pr.";
         } elseif ($act === 'delete' && $show && $ep) {
             $q = db()->prepare('SELECT video_file FROM episodes WHERE show_id=? AND ep=?'); $q->execute([$show['id'], $ep]);
             $f = (string) $q->fetchColumn();
@@ -115,7 +117,7 @@ try {
             }
         }
     }
-} catch (Throwable $e) { if (db()->inTransaction()) db()->rollBack(); error_log('natak admin: ' . $e->getMessage()); $err = 'Something went wrong.'; }
+} catch (Throwable $e) { if (tx_active()) tx_rollback(); error_log('natak admin: ' . $e->getMessage()); $err = 'Something went wrong.'; }
 
 $one = fn(string $sql) => (int) db()->query($sql)->fetchColumn();
 ?><!DOCTYPE html>
@@ -170,15 +172,48 @@ a{color:var(--marigold)}
     <div class="card tile"><b><?= $one('SELECT COUNT(*) FROM views') ?></b><span>Episode views</span></div>
     <div class="card tile"><b><?= $one('SELECT COUNT(*) FROM referrals') ?></b><span>Friends joined by invite</span></div>
     <div class="card tile"><b>₹<?= $one("SELECT COALESCE(SUM(amount),0) FROM orders WHERE status='paid_test'") ?></b><span>Test payments (<?= $one("SELECT COUNT(*) FROM orders WHERE status='paid_test'") ?>)</span></div>
-    <div class="card tile"><b><?= (int) ($unl['ad'] ?? 0) ?> / <?= (int) ($unl['paid'] ?? 0) ?> / <?= (int) ($unl['invite'] ?? 0) ?></b><span>Unlocks by ad / paid / invite</span></div>
+    <div class="card tile"><b><?= (int) ($unl['coins'] ?? 0) + (int) ($unl['paid'] ?? 0) + (int) ($unl['invite'] ?? 0) ?> / <?= (int) ($unl['ad'] ?? 0) ?></b><span>Episodes unlocked with coins / with an ad</span></div>
   </div>
 
+  <h2>Coins</h2>
+  <?php
+    $tx = $by("SELECT reason, COALESCE(SUM(delta),0) FROM coin_tx GROUP BY reason");
+    $sold = (int) ($tx['purchase'] ?? 0); $packBonus = (int) ($tx['pack_bonus'] ?? 0);
+    $free = (int) ($tx['welcome'] ?? 0) + (int) ($tx['checkin'] ?? 0) + (int) ($tx['invite'] ?? 0);
+    $adCoins = (int) ($tx['ad'] ?? 0); $spent = -(int) ($tx['unlock'] ?? 0); $expired = -(int) ($tx['expired'] ?? 0);
+    $held = $by("SELECT kind, COALESCE(SUM(remaining),0) FROM coin_lots WHERE remaining>0 AND (expires=0 OR expires>" . now() . ") GROUP BY kind");
+    $packRs = $one("SELECT COALESCE(SUM(amount),0) FROM orders WHERE status='paid_test' AND kind='coins'");
+    $planRs = $one("SELECT COALESCE(SUM(amount),0) FROM orders WHERE status='paid_test' AND kind NOT IN ('coins','pass','ep')");
+    $passRs = $one("SELECT COALESCE(SUM(amount),0) FROM orders WHERE status='paid_test' AND kind='pass'");
+    $issued = $sold + $packBonus + $free + $adCoins;
+    $heldAll = (int) ($held['paid'] ?? 0) + (int) ($held['bonus'] ?? 0);
+  ?>
+  <div class="tiles">
+    <div class="card tile"><b><?= $sold ?></b><span>Coins sold in packs (₹<?= $packRs ?>)</span></div>
+    <div class="card tile"><b><?= $packBonus ?></b><span>Bonus coins given with packs</span></div>
+    <div class="card tile"><b><?= $free ?></b><span>Free coins: welcome <?= (int) ($tx['welcome'] ?? 0) ?>, check-in <?= (int) ($tx['checkin'] ?? 0) ?>, invites <?= (int) ($tx['invite'] ?? 0) ?></span></div>
+    <div class="card tile"><b><?= $adCoins ?></b><span>Coins earned by watching ads</span></div>
+    <div class="card tile"><b><?= $spent ?></b><span>Coins spent on episodes</span></div>
+    <div class="card tile"><b><?= $expired ?></b><span>Bonus coins that expired unused</span></div>
+    <div class="card tile"><b><?= (int) ($held['paid'] ?? 0) ?> + <?= (int) ($held['bonus'] ?? 0) ?></b><span>Coins still in wallets: paid + bonus</span></div>
+    <div class="card tile"><b><?= $sold > 0 ? '₹' . number_format($packRs / max(1, $sold + $packBonus), 2) : 'n/a' ?></b><span>Average price received per coin</span></div>
+    <div class="card tile"><b>₹<?= $planRs ?> / ₹<?= $passRs ?></b><span>Test income from plans / show passes</span></div>
+  </div>
+  <p class="sub" style="margin-top:8px">Check: coins issued (<?= $issued ?>) = spent (<?= $spent ?>) + expired (<?= $expired ?>) + still in wallets (<?= $heldAll ?>). <?= $issued === $spent + $expired + $heldAll ? 'The books balance.' : 'These do not add up. Tell Claude.' ?></p>
+  <div class="card scroll"><table><tr><th>Coin pack</th><th>Price</th><th>Coins</th><th>Bonus</th><th>Price per coin</th><th>Bought (test)</th></tr>
+  <?php $pc = $by("SELECT pack, COUNT(*) FROM orders WHERE status='paid_test' AND kind='coins' GROUP BY pack"); foreach (PACKS as $pid => $p): ?>
+    <tr><td><?= h($pid) ?></td><td class="n">₹<?= $p['rs'] ?></td><td class="n"><?= $p['coins'] ?></td><td class="n"><?= $p['bonus'] ?></td><td class="n">₹<?= number_format($p['rs'] / ($p['coins'] + $p['bonus']), 2) ?></td><td class="n"><?= (int) ($pc[$pid] ?? 0) ?></td></tr>
+  <?php endforeach; ?></table></div>
+  <p class="sub">Free coins: <?= ECON['welcome'] ?> on sign-up, <?= implode(', ', ECON['checkin']) ?> across a 7-day check-in streak, <?= ECON['invite'] ?> per invited friend who finishes an episode. They expire after <?= ECON['bonus_days'] ?> days; pack bonus after <?= ECON['pack_bonus_days'] ?> days; paid coins never expire. Limits: <?= ECON['max_packs_day'] ?> packs a day and <?= ECON['max_paid_balance'] ?> paid coins per account, <?= AD_CAP ?> ad unlocks a day.</p>
+
   <h2>Shows</h2>
-  <div class="card scroll"><table><tr><th>Show</th><th>Views</th><th>Finished</th><th>Likes</th><th>Saves</th><th>Shares</th><th>Free episodes</th></tr>
+  <div class="card scroll"><table><tr><th>Show</th><th>Views</th><th>Finished</th><th>Likes</th><th>Saves</th><th>Shares</th><th>Free episodes / coins per episode / pass Rs</th></tr>
   <?php foreach ($shows as $s): $id = $s['id']; ?>
     <tr><td><?= h($s['title']) ?></td><td class="n"><?= (int) ($views[$id] ?? 0) ?></td><td class="n"><?= (int) ($done[$id] ?? 0) ?></td><td class="n"><?= (int) ($likes[$id] ?? 0) ?></td><td class="n"><?= (int) ($saves[$id] ?? 0) ?></td><td class="n"><?= (int) ($shares[$id] ?? 0) ?></td>
     <td><form class="in" method="post"><input type="hidden" name="csrf" value="<?= $csrf ?>"><input type="hidden" name="act" value="free"><input type="hidden" name="show" value="<?= h($id) ?>">
-      <input aria-label="Free episodes for <?= h($s['title']) ?>" style="width:70px;padding:5px" type="number" name="free" min="0" max="<?= (int) $s['eps'] ?>" value="<?= (int) $s['free_eps'] ?>"> <button class="ghost" type="submit">Save</button></form></td></tr>
+      <input aria-label="Free episodes for <?= h($s['title']) ?>" style="width:70px;padding:5px" type="number" name="free" min="0" max="<?= (int) $s['eps'] ?>" value="<?= (int) $s['free_eps'] ?>">
+      <input aria-label="Coins per locked episode for <?= h($s['title']) ?>" style="width:70px;padding:5px" type="number" name="coins" min="1" max="500" value="<?= (int) $s['ep_coins'] ?>">
+      <input aria-label="Show pass price in rupees for <?= h($s['title']) ?>" style="width:80px;padding:5px" type="number" name="pass" min="0" max="5000" value="<?= (int) $s['pass_rs'] ?>"> <button class="ghost" type="submit">Save</button></form></td></tr>
   <?php endforeach; ?></table></div>
 
   <h2>Upload an episode video</h2>

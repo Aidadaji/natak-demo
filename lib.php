@@ -3,8 +3,31 @@ declare(strict_types=1);
 
 const AD_CAP = 5;            // rewarded-ad unlocks per user per day
 const INVITE_REWARD = 3;     // free unlocks for the inviter when a friend signs up
-const PRICE = ['ep' => 5, 'pass' => 149, 'quarter' => 399];
 const COOKIE = 'nt';
+
+/* ---------- Coin economy (see ECONOMY.md for the reasoning) ---------- */
+const EP_COINS_DEFAULT = 10;                 // coins to unlock one episode; each show can override
+const ECON = [
+    'welcome' => 20,                         // one-time bonus on creating an account (2 episodes)
+    'invite' => 30,                          // to the inviter once the invited friend finishes an episode (3 episodes)
+    'checkin' => [2, 2, 3, 3, 4, 4, 10],     // daily check-in ladder, day 1 to day 7, then it restarts
+    'bonus_days' => 7,                       // earned coins expire after this many days
+    'pack_bonus_days' => 30,                 // bonus coins that come with a pack expire after this many days
+    'max_packs_day' => 5,                    // coin packs one account may buy per day
+    'max_paid_balance' => 20000,             // paid coins one account may hold
+    'rs_per_coin_ref' => 0.43,               // reference value of a coin (the Rs 99 pack), used to judge the show pass
+];
+const PACKS = [
+    'p29' => ['rs' => 29, 'coins' => 60, 'bonus' => 0],
+    'p99' => ['rs' => 99, 'coins' => 200, 'bonus' => 30],
+    'p249' => ['rs' => 249, 'coins' => 500, 'bonus' => 125],
+    'p499' => ['rs' => 499, 'coins' => 1000, 'bonus' => 400],
+];
+const PLANS = [
+    'week' => ['rs' => 99, 'days' => 7, 'label' => '1 week'],
+    'quarter' => ['rs' => 399, 'days' => 90, 'label' => '3 months'],
+    'year' => ['rs' => 899, 'days' => 365, 'label' => '1 year'],
+];
 
 function data_dir(): string {
     static $d = null;
@@ -180,17 +203,44 @@ const THORNBOUND = [
   10 => ['Hello, Daughter', '13Mx-TybzGaIiKkqyy2v70ag5_ica-KKY', '1wdwvR9Hmp4xX13f6oP7D4PP2Vl9MyBoP'],
 ];
 
+function add_col(PDO $pdo, string $t, string $c, string $def): void {
+    foreach ($pdo->query("PRAGMA table_info($t)") as $r) if ($r['name'] === $c) return;
+    $pdo->exec("ALTER TABLE $t ADD COLUMN $c $def");
+}
+
 function migrate(PDO $pdo): void {
+    $v = $pdo->query("SELECT v FROM settings WHERE k='schema'")->fetchColumn();
+    if ($v === '3') return;
     $pdo->exec('CREATE TABLE IF NOT EXISTS ep_meta(show_id TEXT, ep INTEGER, title TEXT, PRIMARY KEY(show_id, ep))');
     $q = $pdo->prepare('SELECT 1 FROM shows WHERE id=?'); $q->execute(['thornbound']);
-    if ($q->fetchColumn()) return;
-    $pdo->prepare('INSERT INTO shows(id,title,genre,line,eps,free_eps,c0,c1,who,caps,shelf,sort) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)')->execute([
-        'thornbound', 'Thornbound', 'Dark fantasy', 'She was sent to kill the Thorn King. His touch turns every living thing to ash, except her.', 10, 5, '#5a0f24', '#150a22',
-        json_encode(['Lyra', 'The ninth assassin']),
-        json_encode(['She slips into the <em>Thorn King\'s</em> chamber.', 'He catches her blade with his cursed hand.', 'She does not turn to <em>ash</em>.', 'The door creaks open on torchlight.', '"Tell him you\'re <em>mine</em>."']),
-        'fantasy', -1]);
-    $m = $pdo->prepare('INSERT OR IGNORE INTO ep_meta(show_id, ep, title) VALUES(?,?,?)');
-    foreach (THORNBOUND as $n => $e) $m->execute(['thornbound', $n, $e[0]]);
+    if (!$q->fetchColumn()) {
+        $pdo->prepare('INSERT INTO shows(id,title,genre,line,eps,free_eps,c0,c1,who,caps,shelf,sort) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)')->execute([
+            'thornbound', 'Thornbound', 'Dark fantasy', 'She was sent to kill the Thorn King. His touch turns every living thing to ash, except her.', 10, 5, '#5a0f24', '#150a22',
+            json_encode(['Lyra', 'The ninth assassin']),
+            json_encode(['She slips into the <em>Thorn King\'s</em> chamber.', 'He catches her blade with his cursed hand.', 'She does not turn to <em>ash</em>.', 'The door creaks open on torchlight.', '"Tell him you\'re <em>mine</em>."']),
+            'fantasy', -1]);
+        $m = $pdo->prepare('INSERT OR IGNORE INTO ep_meta(show_id, ep, title) VALUES(?,?,?)');
+        foreach (THORNBOUND as $n => $e) $m->execute(['thornbound', $n, $e[0]]);
+    }
+    // schema 3: the coin economy
+    add_col($pdo, 'shows', 'ep_coins', 'INTEGER NOT NULL DEFAULT ' . EP_COINS_DEFAULT);
+    add_col($pdo, 'shows', 'pass_rs', 'INTEGER NOT NULL DEFAULT 149');
+    add_col($pdo, 'users', 'streak', 'INTEGER NOT NULL DEFAULT 0');
+    add_col($pdo, 'users', 'last_checkin', 'TEXT');
+    add_col($pdo, 'orders', 'pack', 'TEXT');
+    add_col($pdo, 'referrals', 'rewarded', 'INTEGER NOT NULL DEFAULT 1');
+    $pdo->exec('
+      CREATE TABLE IF NOT EXISTS coin_lots(id INTEGER PRIMARY KEY, user_id INTEGER NOT NULL, kind TEXT NOT NULL, remaining INTEGER NOT NULL, expires INTEGER NOT NULL DEFAULT 0, created INTEGER NOT NULL);
+      CREATE INDEX IF NOT EXISTS lots_user ON coin_lots(user_id, remaining);
+      CREATE TABLE IF NOT EXISTS coin_tx(id INTEGER PRIMARY KEY, user_id INTEGER NOT NULL, delta INTEGER NOT NULL, reason TEXT NOT NULL, label TEXT, show_id TEXT, ep INTEGER, balance INTEGER NOT NULL, created INTEGER NOT NULL);
+      CREATE INDEX IF NOT EXISTS tx_user ON coin_tx(user_id, id);
+    ');
+    // free unlocks earned before coins existed become coins, one episode's worth each
+    foreach ($pdo->query('SELECT id, credits FROM users WHERE credits > 0')->fetchAll() as $u) {
+        coins_grant((int) $u['id'], (int) $u['credits'] * EP_COINS_DEFAULT, 'bonus', ECON['bonus_days'], 'invite', 'Free unlocks from invites, now coins');
+        $pdo->prepare('UPDATE users SET credits=0 WHERE id=?')->execute([$u['id']]);
+    }
+    $pdo->exec("INSERT INTO settings(k,v) VALUES('schema','3') ON CONFLICT(k) DO UPDATE SET v='3'");
 }
 
 function poster_path(string $show): ?string {
@@ -216,4 +266,70 @@ function drive_fetch(string $id, string $dest, int $maxBytes): ?string {
     curl_close($ch); fclose($fh);
     if (!$ok || $code !== 200) { @unlink($dest); return $code === 404 ? 'Google Drive says the file was not found.' : ($code === 401 || $code === 403 ? 'Google Drive refused. Share the file as "Anyone with the link".' : 'Download failed (' . ($err ?: 'status ' . $code) . ').'); }
     return null;
+}
+
+/* ---------- Transactions and the coin wallet ---------- */
+function tx_begin(): void { db()->exec('BEGIN IMMEDIATE'); $GLOBALS['__tx'] = true; }
+function tx_commit(): void { db()->exec('COMMIT'); $GLOBALS['__tx'] = false; }
+function tx_active(): bool { return !empty($GLOBALS['__tx']); }
+function tx_rollback(): void { try { db()->exec('ROLLBACK'); } catch (Throwable $e) { /* nothing open */ } $GLOBALS['__tx'] = false; }
+
+function coins_total(int $uid): int {
+    $q = db()->prepare('SELECT COALESCE(SUM(remaining),0) FROM coin_lots WHERE user_id=? AND remaining>0 AND (expires=0 OR expires>?)');
+    $q->execute([$uid, now()]);
+    return (int) $q->fetchColumn();
+}
+function coins_log(int $uid, int $delta, string $reason, string $label, ?string $show = null, ?int $ep = null): void {
+    db()->prepare('INSERT INTO coin_tx(user_id,delta,reason,label,show_id,ep,balance,created) VALUES(?,?,?,?,?,?,?,?)')
+        ->execute([$uid, $delta, $reason, $label, $show, $ep, coins_total($uid), now()]);
+}
+/** Writes off bonus coins whose time has run out, and records it in the history. */
+function coins_expire(int $uid): void {
+    $q = db()->prepare('SELECT COALESCE(SUM(remaining),0) FROM coin_lots WHERE user_id=? AND remaining>0 AND expires>0 AND expires<=?');
+    $q->execute([$uid, now()]);
+    $n = (int) $q->fetchColumn();
+    if ($n < 1) return;
+    db()->prepare('UPDATE coin_lots SET remaining=0 WHERE user_id=? AND remaining>0 AND expires>0 AND expires<=?')->execute([$uid, now()]);
+    coins_log($uid, -$n, 'expired', 'Bonus coins expired');
+}
+function coins_grant(int $uid, int $n, string $kind, int $days, string $reason, string $label, ?string $show = null, ?int $ep = null): void {
+    if ($n < 1) return;
+    db()->prepare('INSERT INTO coin_lots(user_id,kind,remaining,expires,created) VALUES(?,?,?,?,?)')->execute([$uid, $kind, $n, $days > 0 ? now() + $days * 86400 : 0, now()]);
+    coins_log($uid, $n, $reason, $label, $show, $ep);
+}
+/** Spends bonus coins first (soonest to expire first), then paid coins. False when the wallet is short. */
+function coins_spend(int $uid, int $n, string $reason, string $label, ?string $show = null, ?int $ep = null): bool {
+    coins_expire($uid);
+    if ($n < 1 || coins_total($uid) < $n) return false;
+    $q = db()->prepare("SELECT id, remaining FROM coin_lots WHERE user_id=? AND remaining>0 ORDER BY (kind='bonus') DESC, (expires=0), expires, id");
+    $q->execute([$uid]);
+    $left = $n;
+    $u = db()->prepare('UPDATE coin_lots SET remaining=remaining-? WHERE id=?');
+    foreach ($q->fetchAll() as $lot) {
+        $take = min($left, (int) $lot['remaining']);
+        $u->execute([$take, $lot['id']]);
+        $left -= $take;
+        if ($left < 1) break;
+    }
+    coins_log($uid, -$n, $reason, $label, $show, $ep);
+    return true;
+}
+function coins_wallet(int $uid): array {
+    $q = db()->prepare("SELECT kind, COALESCE(SUM(remaining),0) n FROM coin_lots WHERE user_id=? AND remaining>0 AND (expires=0 OR expires>?) GROUP BY kind");
+    $q->execute([$uid, now()]);
+    $by = $q->fetchAll(PDO::FETCH_KEY_PAIR);
+    $q = db()->prepare('SELECT expires, SUM(remaining) n FROM coin_lots WHERE user_id=? AND remaining>0 AND expires>? GROUP BY expires ORDER BY expires LIMIT 1');
+    $q->execute([$uid, now()]);
+    $nx = $q->fetch();
+    $paid = (int) ($by['paid'] ?? 0); $bonus = (int) ($by['bonus'] ?? 0);
+    return ['total' => $paid + $bonus, 'paid' => $paid, 'bonus' => $bonus, 'next' => $nx ? ['n' => (int) $nx['n'], 'at' => (int) $nx['expires']] : null];
+}
+function checkin_next(array $u): array {
+    $ladder = ECON['checkin'];
+    $yesterday = (new DateTime('yesterday', new DateTimeZone('Asia/Kolkata')))->format('Y-m-d');
+    $done = $u['last_checkin'] === today();
+    $streak = (int) $u['streak'];
+    if (!$done && $u['last_checkin'] !== $yesterday) $streak = 0;              // streak broken
+    $day = $done ? $streak : ($streak % count($ladder)) + 1;                    // the day being, or just, claimed
+    return ['done' => $done, 'day' => $day, 'reward' => $ladder[$day - 1] ?? $ladder[0]];
 }

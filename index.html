@@ -128,6 +128,33 @@ button:focus-visible,a:focus-visible{outline:3px solid var(--marigold);outline-o
 .me dt{color:var(--dust)}
 .me dd{margin:0;font-weight:600;text-align:right;font-variant-numeric:tabular-nums}
 
+
+.coin{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--marigold);border-radius:999px;padding:5px 11px 5px 7px;font-weight:700;font-size:14px;font-variant-numeric:tabular-nums;color:var(--paper);background:rgba(245,165,36,.12);white-space:nowrap}
+.coin i,.ci{display:inline-block;width:15px;height:15px;border-radius:50%;background:radial-gradient(circle at 35% 30%,#ffe08a,#f5a524 60%,#b46a00);box-shadow:inset 0 0 0 1.5px rgba(120,60,0,.55);flex:none;vertical-align:-2px}
+.coin.bump{animation:bump .5s ease}
+@keyframes bump{0%{transform:scale(1)}40%{transform:scale(1.18)}100%{transform:scale(1)}}
+.topr{display:flex;gap:8px;align-items:center}
+.delta{position:absolute;right:16px;top:136px;z-index:9;font-weight:700;font-size:15px;padding:6px 12px;border-radius:999px;display:none;font-variant-numeric:tabular-nums;pointer-events:none}
+.delta.on{display:block;animation:rise 1.9s ease forwards}
+.delta.plus{background:var(--leaf);color:#0d231a}.delta.minus{background:var(--sindoor);color:#fff}.delta.both{background:var(--velvet);color:var(--paper);border:1px solid var(--line)}
+@keyframes rise{0%{opacity:0;transform:translateY(8px)}15%{opacity:1;transform:none}80%{opacity:1}100%{opacity:0;transform:translateY(-14px)}}
+.bal{display:flex;align-items:baseline;gap:10px;margin:2px 0 4px}
+.bal b{font-family:var(--display);font-weight:400;font-size:44px;line-height:1;font-variant-numeric:tabular-nums}
+.ladder{display:grid;grid-template-columns:repeat(7,1fr);gap:5px;margin:10px 0}
+.ladder div{border:1px solid var(--line);border-radius:9px;padding:6px 0;text-align:center;font-size:11.5px;color:var(--dust)}
+.ladder div b{display:block;font-size:15px;color:var(--paper);font-variant-numeric:tabular-nums}
+.ladder div.got{background:rgba(63,191,138,.16);border-color:rgba(63,191,138,.5)}
+.ladder div.today{border-color:var(--marigold);background:rgba(245,165,36,.12)}
+.hist{list-style:none;margin:8px 0 0;padding:0}
+.hist li{display:flex;gap:10px;align-items:center;padding:9px 0;border-bottom:1px solid var(--line);font-size:14px}
+.hist .w{flex:1;min-width:0}.hist .w span{display:block;font-size:12px;color:var(--dust)}
+.hist .d{font-weight:700;font-variant-numeric:tabular-nums;white-space:nowrap}.hist .d.p{color:var(--leaf)}.hist .d.m{color:#ff9aa8}
+.hist .b{font-size:12px;color:var(--dust);font-variant-numeric:tabular-nums;white-space:nowrap;width:52px;text-align:right}
+.sec{font-size:13px;font-weight:700;color:var(--dust);text-transform:none;margin:16px 0 8px}
+.check{display:flex;gap:8px;align-items:center;font-size:13.5px;color:var(--dust);margin:6px 0 10px}
+.check input{accent-color:var(--marigold);width:16px;height:16px}
+.opt .p small{display:block;font-weight:500;font-size:11.5px;color:var(--dust)}
+@media (prefers-reduced-motion:reduce){.coin.bump,.delta.on{animation:none}.delta.on{opacity:1}}
 video#vid{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;background:#000;display:none}
 .hasvid video#vid{display:block}
 .hasvid .scene,.hasvid .placeholder,.hasvid .cap,.hasvid .namecard{display:none !important}
@@ -150,11 +177,12 @@ video#vid{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;back
 <div class="app" id="app">
   <div class="ribbon"><span>Test build. Payments and ads are in test mode.</span><span id="who"></span></div>
   <div class="toast" id="toast" role="status"></div>
+  <div class="delta" id="delta" aria-hidden="true"></div>
 
   <main class="view on" id="home">
     <div class="top">
       <div class="brand">NATAK<small>Placeholder name. Your brand goes here.</small></div>
-      <button class="pill" id="acctBtn" type="button">Account</button>
+      <div class="topr"><button class="coin" id="coinBtn" type="button" aria-label="Coin wallet"><i></i><span id="coinN">0</span></button><button class="pill" id="acctBtn" type="button">Account</button></div>
     </div>
     <button class="hero" id="hero" type="button"></button>
     <section class="shelf" id="contSec" hidden><h3>Continue watching</h3><div class="row" id="rowCont"></div></section>
@@ -175,6 +203,7 @@ video#vid{position:absolute;inset:0;width:100%;height:100%;object-fit:cover;back
       <div class="ptop">
         <button class="back" id="backBtn" type="button" aria-label="Back to home">&#8249;</button>
         <div class="ptitle"><span id="pShow"></span><small id="pEp"></small></div>
+        <button class="coin" id="coinBtn2" type="button" aria-label="Coin wallet"><i></i><span id="coinN2">0</span></button>
       </div>
       <div class="placeholder">No video uploaded for this episode yet. Sample picture, 12 s.</div>
       <div class="namecard" id="namecard"></div>

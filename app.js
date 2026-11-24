@@ -3,7 +3,7 @@
 var EP_MS = 12000;               // length of the stand-in picture when an episode has no video
 var ST = null, cur = null, ep = 1;
 var raf = null, startAt = 0, elapsed = 0, paused = false, mode = "ph";
-var viewSent = false, adT = null, pendingBuy = null, toastT = null, REF = "";
+var viewSent = false, adT = null, pendingBuy = null, toastT = null, deltaT = null, REF = "", AUTO = false;
 
 var $ = function (id) { return document.getElementById(id); };
 var vid = $("vid"), stage = $("stage");
@@ -14,10 +14,26 @@ function bg(c) { return "linear-gradient(155deg," + c[0] + "," + c[1] + ")"; }
 function art(s) { return s.poster ? "linear-gradient(to top,rgba(18,10,26,.9),rgba(18,10,26,.05) 60%),url(" + s.poster + ") center/cover no-repeat," + bg(s.c) : bg(s.c); }
 function canWatch(s, e) { return e <= s.free || ST.me.vip || s.pass || s.open.indexOf(e) > -1; }
 function inPlayer() { return $("player").classList.contains("on"); }
+function coins() { return ST ? ST.me.coins.total : 0; }
+function day(ts) { return new Date(ts * 1000).toLocaleDateString("en-IN", { day: "numeric", month: "short" }); }
+function when(ts) { return new Date(ts * 1000).toLocaleString("en-IN", { day: "numeric", month: "short", hour: "numeric", minute: "2-digit" }); }
+var COIN = '<i class="ci"></i>';
 
-try { REF = new URLSearchParams(location.search).get("ref") || ""; if (REF) localStorage.setItem("nt_ref", REF); else REF = localStorage.getItem("nt_ref") || ""; } catch (e) { /* storage may be blocked */ }
+try {
+  REF = new URLSearchParams(location.search).get("ref") || "";
+  if (REF) localStorage.setItem("nt_ref", REF); else REF = localStorage.getItem("nt_ref") || "";
+  AUTO = localStorage.getItem("nt_auto") === "1";
+} catch (e) { /* storage may be blocked */ }
 
+/* Every change to the wallet is shown: the coin count updates and a +n / -n chip floats up. */
+function showDelta(text, cls) {
+  var d = $("delta"); d.textContent = text; d.className = "delta " + cls; void d.offsetWidth; d.className = "delta on " + cls;
+  clearTimeout(deltaT); deltaT = setTimeout(function () { d.className = "delta"; }, 2000);
+  ["coinBtn", "coinBtn2"].forEach(function (id) { var b = $(id); b.classList.remove("bump"); void b.offsetWidth; b.classList.add("bump"); });
+}
+function paintCoins() { $("coinN").textContent = fmt(coins()); $("coinN2").textContent = fmt(coins()); }
 function api(a, body) {
+  var before = ST ? coins() : null;
   return fetch("api.php?a=" + a, {
     method: body ? "POST" : "GET", credentials: "same-origin",
     headers: { "Content-Type": "application/json", "X-Requested-With": "natak" },
@@ -25,7 +41,13 @@ function api(a, body) {
   }).then(function (r) {
     return r.json().catch(function () { return {}; }).then(function (d) {
       if (!r.ok) { var e = new Error(d.error || "Could not reach the server. Check your connection."); e.status = r.status; throw e; }
-      if (d.state) ST = d.state;
+      if (d.state) {
+        ST = d.state; paintCoins();
+        var diff = coins() - (before == null ? coins() : before), quiet = a === "login" || a === "logout" || a === "state" || a === "wallet";
+        if (a === "ad_done") showDelta("+" + d.earned + "  −" + d.spent + " coins", "both");
+        else if (!quiet && diff > 0) showDelta("+" + diff + " coins", "plus");
+        else if (!quiet && diff < 0) showDelta("−" + (-diff) + " coins", "minus");
+      }
       return d;
     });
   });
@@ -49,10 +71,11 @@ function renderHome() {
   $("rowAll").innerHTML = ST.shows.map(function (s) { return card(s); }).join("");
   $("rowHidden").innerHTML = by(function (s) { return s.shelf.indexOf("hidden") > -1; }).map(function (s) { return card(s); }).join("");
   $("rowRevenge").innerHTML = by(function (s) { return s.shelf.indexOf("revenge") > -1; }).map(function (s) { return card(s); }).join("");
-  $("foot").textContent = "The first " + h.free + " episodes of " + h.title + " are free. Later episodes open with an ad, an invite, or a payment.";
+  $("foot").textContent = "The first " + h.free + " episodes of " + h.title + " are free. Later episodes cost " + h.price + " coins each. Earn coins with a daily check-in, an ad, or by inviting a friend, or buy a pack.";
   $("acctBtn").textContent = me.guest ? "Sign in" : (me.vip ? "Subscribed" : "Account");
   $("acctBtn").className = "pill" + (me.vip ? " vip" : "");
   $("who").textContent = me.guest ? "Guest" : me.name;
+  paintCoins();
 }
 function go(view) {
   $("home").classList.toggle("on", view === "home");
@@ -86,7 +109,11 @@ function play(sid, e) {
   if (e > s.eps) { closeSheet(); toast("That was the last episode"); go("home"); return; }
   cur = sid; ep = e; stop(); viewSent = false; elapsed = 0; paused = false;
   drawStage(s, e);
-  if (!canWatch(s, e)) { stage.classList.remove("hasvid"); stage.classList.add("paused"); paywall(); return; }
+  if (!canWatch(s, e)) {
+    stage.classList.remove("hasvid"); stage.classList.add("paused");
+    if (AUTO && coins() >= s.price) { unlockNow(true); return; }   // the viewer chose to spend coins automatically
+    paywall(); return;
+  }
   closeSheet(); stage.classList.remove("paused");
   if (s.videos.indexOf(e) > -1) {
     mode = "vid"; stage.classList.add("hasvid");
@@ -138,20 +165,30 @@ vid.addEventListener("ended", function () { if (mode === "vid") onEnd(vid.durati
 vid.addEventListener("error", function () { if (mode === "vid" && vid.getAttribute("src")) { toast("This video could not load. Showing the sample picture.", true); startPlaceholder(); } });
 
 /* ---------- SHEETS ---------- */
-function openSheet(html) { $("sheet").innerHTML = html; $("scrim").classList.add("on"); var b = $("sheet").querySelector("input,button,a"); if (b) b.focus(); }
+function openSheet(html) { $("sheet").innerHTML = html; $("scrim").classList.add("on"); $("sheet").scrollTop = 0; var b = $("sheet").querySelector("input:not([type=checkbox]),button,a"); if (b) b.focus(); }
 function closeSheet() { clearInterval(adT); $("scrim").classList.remove("on"); $("sheet").innerHTML = ""; }
-function opt(act, kind, title, sub, price, cls, dis) {
-  return '<button class="opt' + (cls ? " " + cls : "") + '" type="button" data-act="' + act + '"' + (kind ? ' data-kind="' + kind + '"' : "") + (dis ? " disabled" : "") + '><div class="t"><b>' + title + '</b><span>' + sub + '</span></div><div class="p' + (price === "Free" ? " free" : "") + '">' + price + '</div></button>';
+function opt(act, attrs, title, sub, price, cls, dis) {
+  return '<button class="opt' + (cls ? " " + cls : "") + '" type="button" data-act="' + act + '"' + (attrs || "") + (dis ? " disabled" : "") + '><div class="t"><b>' + title + '</b><span>' + sub + '</span></div><div class="p' + (price === "Free" ? " free" : "") + '">' + price + '</div></button>';
+}
+function backAct() { return cur && inPlayer() ? (canWatch(show(cur), ep) ? "resume" : "paywall") : "close"; }
+
+function unlockNow(silent) {
+  var s = cur, e = ep;
+  api("unlock", { show: s, ep: e }).then(function () { if (!silent) toast("Episode " + e + " opened"); play(s, e); })
+    .catch(function (err) { if (err.status === 402) { store("You need more coins for this episode."); } else { oops(err); paywall(); } });
 }
 function paywall() {
-  var s = show(cur), me = ST.me, P = ST.price;
-  openSheet('<h4>Episode ' + ep + ' is locked</h4><p class="sub">' + esc(s.title) + '. ' + (s.eps - ep + 1) + ' episodes left. Pick a way to keep watching.</p>' +
-    opt("ad", "", "Watch an ad", "Opens this episode. " + me.adsLeft + " of " + me.adCap + " left today.", "Free", "", me.adsLeft <= 0) +
-    (me.credits > 0 ? opt("credit", "", "Use a free unlock", "You have " + me.credits + " from friends you invited.", "Free") : "") +
-    opt("share", "", "Invite a friend", "Get " + ST.inviteReward + " free unlocks when they create an account.", "Free") +
-    opt("buy", "ep", "This episode only", "One tap by UPI.", "₹" + P.ep) +
-    opt("buy", "pass", "Whole show pass", "All " + s.eps + " episodes of this show, yours to rewatch.", "₹" + P.pass, "best") +
-    opt("buy", "quarter", "Every show, 3 months", "One payment covers every show for 90 days.", "₹" + P.quarter) +
+  var s = show(cur), me = ST.me, have = coins(), need = s.price, c = me.checkin, o = "";
+  if (have >= need) o += opt("unlock", "", "Unlock with " + need + " coins", "You have " + have + ". After this you keep " + (have - need) + ".", COIN + " " + need, "best");
+  else o += opt("store", "", "Get coins", "This episode costs " + need + ". You have " + have + ", so you need " + (need - have) + " more.", COIN + " " + need, "best");
+  o += opt("ad", "", "Watch an ad", "Earns " + need + " coins and opens this episode. " + me.adsLeft + " of " + me.adCap + " left today.", "Free", "", me.adsLeft <= 0);
+  if (me.guest) o += opt("signup", "", "Create a free account", "Get " + ST.econ.welcome + " coins now, plus coins every day you check in.", "+" + ST.econ.welcome);
+  else if (!c.done) o += opt("checkin", "", "Daily check-in", "Day " + c.day + " of 7. Come back every day for more.", "+" + c.reward);
+  o += opt("share", "", "Invite a friend", "Get " + ST.econ.invite + " coins when they join and finish an episode.", "+" + ST.econ.invite);
+  o += opt("store", ' data-tab="plans"', "Watch everything", "Every show, no coins needed, from ₹" + ST.econ.plans[0].rs + " a week.", "₹" + ST.econ.plans[0].rs + "+");
+  if (s.passWorth) o += opt("buy", ' data-kind="pass"', "Own this show", "All " + s.eps + " episodes, yours to rewatch.", "₹" + s.passRs);
+  openSheet('<h4>Episode ' + ep + ' is locked</h4><p class="sub">' + esc(s.title) + (s.titles[ep] ? ": " + esc(s.titles[ep]) : "") + '. ' + (s.eps - ep + 1) + ' episodes left at ' + need + ' coins each.</p>' + o +
+    '<label class="check" for="autoUn"><input type="checkbox" id="autoUn"' + (AUTO ? " checked" : "") + '> Unlock the next episodes automatically while I have coins</label>' +
     '<button class="close" type="button" data-act="home">Not now</button>');
 }
 function adScreen() {
@@ -168,26 +205,46 @@ function adScreen() {
     }, 1000);
   }).catch(oops);
 }
-function buy(kind) {
-  if (ST.me.guest) { pendingBuy = kind; authSheet("signup", "Create a free account to pay. Your watch history comes with you."); return; }
+function store(why, tab) {
+  var E = ST.econ, s = cur ? show(cur) : ST.shows[0], per = s.price, h = "";
+  var packs = E.packs.map(function (p, i) {
+    var total = p.coins + p.bonus, epsN = Math.floor(total / per);
+    return opt("buy", ' data-kind="coins" data-pack="' + p.id + '"', COIN + " " + p.coins + (p.bonus ? ' <span style="display:inline;color:var(--leaf);font-weight:700">+' + p.bonus + " bonus</span>" : ""),
+      "About " + epsN + " episodes. ₹" + (p.rs / epsN).toFixed(2) + " an episode.", "₹" + p.rs, i === 2 ? "best" : "");
+  }).join("");
+  var plans = E.plans.map(function (p, i) {
+    return opt("buy", ' data-kind="' + p.id + '"', "Everything for " + p.label, "Every show and every episode. No coins, no ads.", "₹" + p.rs, i === 1 ? "best" : "");
+  }).join("");
+  h += '<h4>' + (tab === "plans" ? "Watch everything" : "Get coins") + '</h4><p class="sub">' + esc(why || "You have " + coins() + " coins. One episode costs " + per + ".") + '</p>';
+  h += tab === "plans" ? plans + '<p class="sec">Or buy coins</p>' + packs : packs + '<p class="sec">Or skip coins</p>' + plans;
+  h += '<p class="note">Coins you buy never expire. Bonus coins that come with a pack last ' + E.packBonusDays + ' days and are used first. Test mode: no money moves.</p>';
+  h += '<button class="close" type="button" data-act="' + backAct() + '">Back</button>';
+  openSheet(h);
+}
+function buy(kind, pack) {
+  if (ST.me.guest) { pendingBuy = { kind: kind, pack: pack }; authSheet("signup", "Create a free account to pay. You also get " + ST.econ.welcome + " coins."); return; }
   pendingBuy = null;
-  var s = show(cur);
-  api("order", { kind: kind, show: cur, ep: ep }).then(function (d) {
-    var label = kind === "ep" ? "Episode " + ep + " of " + s.title : kind === "pass" ? "Whole show pass: " + s.title : "All shows for 3 months";
+  var s = cur ? show(cur) : null, body = { kind: kind };
+  if (kind === "coins") body.pack = pack; else if (kind === "pass") body.show = cur;
+  api("order", body).then(function (d) {
+    var label;
+    if (kind === "coins") { var p = ST.econ.packs.filter(function (x) { return x.id === pack; })[0]; label = p.coins + " coins" + (p.bonus ? " + " + p.bonus + " bonus" : ""); }
+    else if (kind === "pass") label = "Own " + s.title;
+    else label = "Everything for " + ST.econ.plans.filter(function (x) { return x.id === kind; })[0].label;
     openSheet('<h4>Pay by UPI</h4><p class="sub">' + esc(label) + '</p><div class="pay">Order #' + d.order + '<div class="amt">₹' + d.amount + '</div>Test mode. No money moves and no UPI app opens.</div>' +
-      '<button class="wide" type="button" data-act="paid" data-order="' + d.order + '">Complete test payment</button><button class="close" type="button" data-act="paywall">Back</button>');
+      '<button class="wide" type="button" data-act="paid" data-order="' + d.order + '">Complete test payment</button><button class="close" type="button" data-act="store">Back</button>');
   }).catch(oops);
 }
 function inviteLink() { return location.origin + location.pathname + "?ref=" + ST.me.ref; }
 function shareScreen() {
-  var s = cur ? show(cur) : ST.shows[0], back = cur && inPlayer() ? "resume" : "close";
+  var s = cur ? show(cur) : ST.shows[0], back = backAct();
   if (ST.me.guest) {
-    openSheet('<h4>Invite a friend</h4><p class="sub">Create a free account to get your own invite link. You get ' + ST.inviteReward + ' free unlocks for every friend who joins.</p><button class="wide" type="button" data-act="signup">Create free account</button><button class="close" type="button" data-act="' + back + '">Back</button>');
+    openSheet('<h4>Invite a friend</h4><p class="sub">Create a free account to get your own invite link. You get ' + ST.econ.invite + ' coins for every friend who joins and finishes an episode.</p><button class="wide" type="button" data-act="signup">Create free account</button><button class="close" type="button" data-act="' + back + '">Back</button>');
     return;
   }
   var link = inviteLink(), text = "Watch \"" + s.title + "\" with me. The first " + s.free + " episodes are free: " + link;
   api("share", { show: s.id }).catch(function () {});
-  openSheet('<h4>Invite a friend</h4><p class="sub">You get ' + ST.inviteReward + ' free unlocks when a friend creates an account from your link.</p>' +
+  openSheet('<h4>Invite a friend</h4><p class="sub">You get ' + ST.econ.invite + ' coins when a friend creates an account from your link and finishes an episode. They get ' + ST.econ.welcome + ' coins to start.</p>' +
     '<input class="copybox" id="shareLink" readonly aria-label="Your invite link" value="' + esc(link) + '">' +
     '<button class="wide" type="button" data-act="copy">Copy link</button>' +
     '<a class="wide alt" href="https://wa.me/?text=' + encodeURIComponent(text) + '" target="_blank" rel="noopener">Send on WhatsApp</a>' +
@@ -197,21 +254,45 @@ function listScreen() {
   var s = show(cur), h = "";
   for (var e = 1; e <= s.eps; e++) {
     var cls = e <= s.free ? "free" : canWatch(s, e) ? "open" : "lock";
-    h += '<button type="button" class="' + cls + (e === ep ? " now" : "") + '" data-act="ep" data-ep="' + e + '" aria-label="Episode ' + e + (cls === "lock" ? ", locked" : "") + '">' + e + '</button>';
+    h += '<button type="button" class="' + cls + (e === ep ? " now" : "") + '" data-act="ep" data-ep="' + e + '" aria-label="Episode ' + e + (cls === "lock" ? ", locked, " + s.price + " coins" : "") + '">' + e + '</button>';
   }
   openSheet('<h4>' + esc(s.title) + '</h4><p class="sub">' + esc(s.line) + '</p><p class="stats">' + fmt(s.views) + ' views · ' + fmt(s.likes) + ' likes · ' + fmt(s.saves) + ' saves · ' + fmt(s.shares) + ' shares</p>' +
-    '<div class="key" style="margin-top:10px"><span><i style="background:var(--leaf)"></i>Free</span><span><i style="background:var(--marigold)"></i>Opened</span><span><i style="background:var(--sindoor)"></i>Locked</span></div><div class="grid">' + h + '</div><button class="close" type="button" data-act="resume">Close</button>');
+    '<div class="key" style="margin-top:10px"><span><i style="background:var(--leaf)"></i>Free</span><span><i style="background:var(--marigold)"></i>Opened</span><span><i style="background:var(--sindoor)"></i>Locked, ' + s.price + ' coins</span></div><div class="grid">' + h + '</div><button class="close" type="button" data-act="resume">Close</button>');
+}
+function walletScreen() {
+  var me = ST.me, w = me.coins, c = me.checkin, E = ST.econ, lad = "";
+  E.ladder.forEach(function (n, i) {
+    var d = i + 1, cls = c.done ? (d <= c.day ? "got" : "") : (d < c.day ? "got" : d === c.day ? "today" : "");
+    lad += '<div class="' + cls + '">Day ' + d + '<b>+' + n + '</b></div>';
+  });
+  var check = me.guest ? '<button class="wide" type="button" data-act="signup">Create free account: +' + E.welcome + ' coins</button>'
+    : c.done ? '<button class="wide alt" type="button" disabled>Checked in today. Come back tomorrow.</button>'
+    : '<button class="wide" type="button" data-act="checkin">Check in: +' + c.reward + ' coins</button>';
+  openSheet('<h4>My coins</h4><div class="bal">' + '<b id="walBal">' + w.total + '</b><span class="sub" style="margin:0">' + w.paid + ' bought · ' + w.bonus + ' bonus</span></div>' +
+    (w.next ? '<p class="note" style="margin:0 0 6px">' + w.next.n + ' bonus coins expire on ' + day(w.next.at) + '. Bonus coins are used first.</p>' : '<p class="note" style="margin:0 0 6px">Coins you buy never expire. Coins you earn last ' + E.bonusDays + ' days.</p>') +
+    '<p class="sec">Daily check-in</p><div class="ladder">' + lad + '</div>' + check +
+    '<button class="wide alt" type="button" data-act="store">Get coins</button><button class="wide alt" type="button" data-act="share">Invite a friend: +' + E.invite + ' coins</button>' +
+    '<label class="check" for="autoUn" style="margin-top:12px"><input type="checkbox" id="autoUn"' + (AUTO ? " checked" : "") + '> Unlock the next episodes automatically while I have coins</label>' +
+    '<p class="sec">History</p><ul class="hist" id="hist"><li><div class="w">Loading...</div></li></ul>' +
+    '<button class="close" type="button" data-act="' + backAct() + '">Close</button>');
+  api("wallet").then(function (d) {
+    var el = $("hist"); if (!el) return;
+    if (!d.history.length) { el.innerHTML = '<li><div class="w">Nothing yet. Coins you earn and spend will be listed here.</div></li>'; return; }
+    el.innerHTML = d.history.map(function (t) {
+      return '<li><div class="w">' + esc(t.label) + '<span>' + when(t.at) + '</span></div><div class="d ' + (t.delta >= 0 ? "p" : "m") + '">' + (t.delta >= 0 ? "+" : "−") + Math.abs(t.delta) + '</div><div class="b">= ' + t.balance + '</div></li>';
+    }).join("");
+  }).catch(function () { var el = $("hist"); if (el) el.innerHTML = '<li><div class="w">Could not load the history.</div></li>'; });
 }
 function authSheet(kind, why) {
   var up = kind === "signup";
-  openSheet('<h4>' + (up ? "Create free account" : "Sign in") + '</h4><p class="sub">' + esc(why || (up ? "Keep your history and unlocks on any phone." : "Welcome back.")) + '</p>' +
+  openSheet('<h4>' + (up ? "Create free account" : "Sign in") + '</h4><p class="sub">' + esc(why || (up ? "Get " + ST.econ.welcome + " coins and keep your history on any phone." : "Welcome back.")) + '</p>' +
     '<form id="authForm" data-kind="' + kind + '" novalidate>' +
     (up ? '<label class="field"><span>Your name</span><input id="fName" name="name" maxlength="40" autocomplete="name" required></label>' : "") +
-    '<label class="field"><span>Mobile number</span><input id="fPhone" name="phone" inputmode="numeric" maxlength="10" autocomplete="tel-national" placeholder="10 digits" required></label>' +
+    '<label class="field"><span>Mobile number</span><input id="fPhone" name="phone" inputmode="numeric" maxlength="14" autocomplete="tel-national" placeholder="10 digits" required></label>' +
     '<label class="field"><span>Password' + (up ? " (6 characters or more)" : "") + '</span><input id="fPass" name="password" type="password" autocomplete="' + (up ? "new-password" : "current-password") + '" required></label>' +
     '<div class="formerr" id="authErr" role="alert"></div><button class="wide" type="submit">' + (up ? "Create account" : "Sign in") + '</button></form>' +
     '<button class="linkbtn" type="button" data-act="' + (up ? "login" : "signup") + '">' + (up ? "I already have an account" : "Create a new account") + '</button>' +
-    '<button class="close" type="button" data-act="' + (cur && inPlayer() ? "resume" : "close") + '">Not now</button>');
+    '<button class="close" type="button" data-act="' + backAct() + '">Not now</button>');
 }
 function acctScreen() {
   var me = ST.me;
@@ -221,17 +302,22 @@ function acctScreen() {
   var n = 0; ST.shows.forEach(function (s) { n += s.open.length; });
   openSheet('<h4>' + esc(me.name) + '</h4><p class="sub">Your account</p><div class="me"><dl>' +
     '<dt>Plan</dt><dd>' + (me.vip ? "All shows until " + until : "Free") + '</dd>' +
-    '<dt>Show passes</dt><dd>' + (passes.length ? esc(passes.join(", ")) : "None") + '</dd>' +
-    '<dt>Single episodes opened</dt><dd>' + n + '</dd>' +
-    '<dt>Free unlocks from invites</dt><dd>' + me.credits + '</dd>' +
+    '<dt>Coins</dt><dd>' + me.coins.total + '</dd>' +
+    '<dt>Shows you own</dt><dd>' + (passes.length ? esc(passes.join(", ")) : "None") + '</dd>' +
+    '<dt>Episodes unlocked</dt><dd>' + n + '</dd>' +
     '<dt>Ad unlocks left today</dt><dd>' + me.adsLeft + ' of ' + me.adCap + '</dd></dl></div>' +
-    '<button class="wide" type="button" data-act="share" style="margin-top:14px">Invite a friend</button>' +
+    '<button class="wide" type="button" data-act="wallet" style="margin-top:14px">My coins and history</button>' +
+    '<button class="wide alt" type="button" data-act="share">Invite a friend</button>' +
     '<button class="wide alt" type="button" data-act="logout">Sign out</button><button class="close" type="button" data-act="close">Close</button>');
 }
 function afterAuth() {
   closeSheet(); if (!inPlayer()) renderHome(); else { updateSide(); $("who").textContent = ST.me.guest ? "Guest" : ST.me.name; }
-  if (pendingBuy && cur) { var k = pendingBuy; var s = show(cur); if (canWatch(s, ep)) { pendingBuy = null; play(cur, ep); } else buy(k); }
+  if (pendingBuy) { var k = pendingBuy; pendingBuy = null; buy(k.kind, k.pack); }
   else if (cur && inPlayer()) resume();
+}
+function afterPaid() {
+  if (cur && inPlayer()) { var s = show(cur); if (canWatch(s, ep)) play(cur, ep); else paywall(); }
+  else { closeSheet(); renderHome(); walletScreen(); }
 }
 
 /* ---------- EVENTS ---------- */
@@ -242,10 +328,13 @@ document.addEventListener("click", function (ev) {
   if (!a || a.disabled) return;
   var act = a.getAttribute("data-act");
   if (act === "ad") adScreen();
-  else if (act === "credit") api("use_credit", { show: cur, ep: ep }).then(function () { toast("Episode " + ep + " opened"); play(cur, ep); }).catch(oops);
+  else if (act === "unlock") { a.disabled = true; unlockNow(false); }
+  else if (act === "checkin") { a.disabled = true; api("checkin", {}).then(function (d) { toast("Checked in: +" + d.earned + " coins"); if (cur && inPlayer() && !canWatch(show(cur), ep)) paywall(); else walletScreen(); }).catch(function (e) { a.disabled = false; oops(e); }); }
+  else if (act === "store") store("", a.getAttribute("data-tab"));
+  else if (act === "wallet") walletScreen();
   else if (act === "share") shareScreen();
-  else if (act === "buy") buy(a.getAttribute("data-kind"));
-  else if (act === "paid") { a.disabled = true; api("pay_test", { order: +a.getAttribute("data-order") }).then(function () { toast("Payment recorded (test)"); play(cur, ep); }).catch(function (e) { a.disabled = false; oops(e); }); }
+  else if (act === "buy") buy(a.getAttribute("data-kind"), a.getAttribute("data-pack"));
+  else if (act === "paid") { a.disabled = true; api("pay_test", { order: +a.getAttribute("data-order") }).then(function (d) { toast(d.earned ? "Added " + d.earned + " coins" : "Payment recorded (test)"); afterPaid(); }).catch(function (e) { a.disabled = false; oops(e); }); }
   else if (act === "paywall") paywall();
   else if (act === "home") { closeSheet(); pendingBuy = null; go("home"); }
   else if (act === "close") { closeSheet(); pendingBuy = null; }
@@ -260,6 +349,12 @@ document.addEventListener("click", function (ev) {
     else { box.select(); toast("Press and hold the link to copy it"); }
   }
 });
+document.addEventListener("change", function (ev) {
+  if (ev.target.id !== "autoUn") return;
+  AUTO = ev.target.checked;
+  try { localStorage.setItem("nt_auto", AUTO ? "1" : "0"); } catch (e) { /* storage may be blocked */ }
+  toast(AUTO ? "Next episodes will unlock with your coins" : "You will be asked before coins are spent");
+});
 document.addEventListener("submit", function (ev) {
   var f = ev.target; if (f.id !== "authForm") return;
   ev.preventDefault();
@@ -269,7 +364,7 @@ document.addEventListener("submit", function (ev) {
   btn.disabled = true; $("authErr").textContent = "";
   api(up ? "signup" : "login", body).then(function () {
     if (up) { try { localStorage.removeItem("nt_ref"); } catch (e) {} REF = ""; }
-    toast(up ? "Account created" : "Signed in"); afterAuth();
+    toast(up ? "Account created: +" + ST.econ.welcome + " coins" : "Signed in"); afterAuth();
   }).catch(function (e) { btn.disabled = false; var el = $("authErr"); if (el) el.textContent = e.message; });
 });
 $("backBtn").addEventListener("click", function () { closeSheet(); go("home"); });
@@ -281,6 +376,8 @@ $("shareBtn").addEventListener("click", function () { hold(); shareScreen(); });
 $("likeBtn").addEventListener("click", function () { api("like", { show: cur }).then(updateSide).catch(oops); });
 $("saveBtn").addEventListener("click", function () { api("save", { show: cur }).then(function () { updateSide(); toast(show(cur).saved ? "Added to My list" : "Removed from My list"); }).catch(oops); });
 $("acctBtn").addEventListener("click", acctScreen);
+$("coinBtn").addEventListener("click", walletScreen);
+$("coinBtn2").addEventListener("click", function () { hold(); walletScreen(); });
 $("scrim").addEventListener("click", function (e) {
   if (e.target !== $("scrim")) return;
   if (cur && inPlayer()) { var s = show(cur); if (canWatch(s, ep)) { closeSheet(); resume(); } }
