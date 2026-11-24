@@ -209,8 +209,10 @@ function add_col(PDO $pdo, string $t, string $c, string $def): void {
 }
 
 function migrate(PDO $pdo): void {
-    $v = $pdo->query("SELECT v FROM settings WHERE k='schema'")->fetchColumn();
-    if ($v === '3') return;
+    $ver = fn() => $pdo->query("SELECT v FROM settings WHERE k='schema'")->fetchColumn();
+    if ($ver() === '3') return;
+    $pdo->exec('BEGIN IMMEDIATE');           // one request upgrades; any other waits, then sees it is done
+    if ($ver() === '3') { $pdo->exec('COMMIT'); return; }
     $pdo->exec('CREATE TABLE IF NOT EXISTS ep_meta(show_id TEXT, ep INTEGER, title TEXT, PRIMARY KEY(show_id, ep))');
     $q = $pdo->prepare('SELECT 1 FROM shows WHERE id=?'); $q->execute(['thornbound']);
     if (!$q->fetchColumn()) {
@@ -240,7 +242,10 @@ function migrate(PDO $pdo): void {
         coins_grant((int) $u['id'], (int) $u['credits'] * EP_COINS_DEFAULT, 'bonus', ECON['bonus_days'], 'invite', 'Free unlocks from invites, now coins');
         $pdo->prepare('UPDATE users SET credits=0 WHERE id=?')->execute([$u['id']]);
     }
+    // accounts made before coins existed get the same welcome bonus as new ones
+    foreach ($pdo->query('SELECT id FROM users WHERE is_guest=0')->fetchAll() as $u) coins_grant((int) $u['id'], ECON['welcome'], 'bonus', ECON['bonus_days'], 'welcome', 'Welcome bonus');
     $pdo->exec("INSERT INTO settings(k,v) VALUES('schema','3') ON CONFLICT(k) DO UPDATE SET v='3'");
+    $pdo->exec('COMMIT');
 }
 
 function poster_path(string $show): ?string {
