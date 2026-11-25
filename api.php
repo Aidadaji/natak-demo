@@ -119,6 +119,32 @@ try {
         $uid = $aid;
         break;
 
+    case 'reset':        // set a new password with a one-time code issued from the admin page
+        $phone = norm_phone($in['phone'] ?? '');
+        $code = preg_replace('/\D/', '', is_string($in['code'] ?? null) ? $in['code'] : '');
+        $pass = is_string($in['password'] ?? null) ? $in['password'] : '';
+        if (strlen($pass) < 6 || strlen($pass) > 200) fail(400, 'Use a password of 6 characters or more.');
+        usleep(400000);
+        tx_begin();
+        $q = db()->prepare('SELECT * FROM users WHERE phone=? AND is_guest=0'); $q->execute([$phone]);
+        $acc = $q->fetch();
+        $live = $acc && $acc['reset_hash'] && (int) $acc['reset_until'] > now();
+        if (!$live || strlen($code) !== 6 || !hash_equals((string) $acc['reset_hash'], hash('sha256', $code))) {
+            if ($live) {   // five wrong tries burn the code
+                $f = (int) $acc['reset_fails'] + 1;
+                if ($f >= 5) db()->prepare('UPDATE users SET reset_hash=NULL, reset_until=0, reset_fails=0 WHERE id=?')->execute([$acc['id']]);
+                else db()->prepare('UPDATE users SET reset_fails=? WHERE id=?')->execute([$f, $acc['id']]);
+            }
+            tx_commit();
+            out(['error' => 'That code is wrong or has expired. Ask for a new one.'], 401);
+        }
+        db()->prepare('UPDATE users SET pass_hash=?, reset_hash=NULL, reset_until=0, reset_fails=0, fails=0, locked_until=0 WHERE id=?')->execute([password_hash($pass, PASSWORD_DEFAULT), $acc['id']]);
+        db()->prepare('DELETE FROM sessions WHERE user_id=?')->execute([$acc['id']]);   // signs the account out everywhere
+        tx_commit();
+        if ($uid === (int) $acc['id']) { $u = current_user(true); $uid = (int) $u['id']; }
+        $extra['reset'] = true;
+        break;
+
     case 'logout':
         $tok = (string) ($_COOKIE[COOKIE] ?? '');
         db()->prepare('DELETE FROM sessions WHERE token_hash=?')->execute([hash('sha256', $tok)]);
@@ -313,6 +339,7 @@ function state(array $u): array {
     return ['me' => ['guest' => (bool) $u['is_guest'], 'name' => $u['name'], 'vip' => (int) $u['vip_until'] > now(), 'vipUntil' => (int) $u['vip_until'],
         'adsLeft' => ads_left($u), 'adCap' => AD_CAP, 'ref' => $u['is_guest'] ? null : $u['ref_code'], 'coins' => coins_wallet($uid),
         'checkin' => ['done' => $c['done'], 'day' => $c['day'], 'reward' => $c['reward']]],
+        'support' => (string) (setting('support') ?? ''),
         'econ' => ['packs' => $packs, 'plans' => $plans, 'welcome' => ECON['welcome'], 'invite' => ECON['invite'], 'ladder' => ECON['checkin'], 'bonusDays' => ECON['bonus_days'], 'packBonusDays' => ECON['pack_bonus_days']],
         'shows' => $shows];
 }

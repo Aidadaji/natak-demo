@@ -77,6 +77,7 @@ function db(): PDO {
     ');
     if (!$pdo->query('SELECT COUNT(*) FROM shows')->fetchColumn()) seed($pdo);
     migrate($pdo);
+    migrate_reset($pdo);
     return $pdo;
 }
 
@@ -206,6 +207,20 @@ const THORNBOUND = [
 function add_col(PDO $pdo, string $t, string $c, string $def): void {
     foreach ($pdo->query("PRAGMA table_info($t)") as $r) if ($r['name'] === $c) return;
     $pdo->exec("ALTER TABLE $t ADD COLUMN $c $def");
+}
+
+/** Password reset codes: issued by the admin, stored hashed, single use, short lived. */
+function migrate_reset(PDO $pdo): void {
+    $done = fn() => $pdo->query("SELECT v FROM settings WHERE k='schema_reset'")->fetchColumn() === '1';
+    if ($done()) return;
+    $pdo->exec('BEGIN IMMEDIATE');
+    if (!$done()) {
+        add_col($pdo, 'users', 'reset_hash', 'TEXT');
+        add_col($pdo, 'users', 'reset_until', 'INTEGER NOT NULL DEFAULT 0');
+        add_col($pdo, 'users', 'reset_fails', 'INTEGER NOT NULL DEFAULT 0');
+        $pdo->exec("INSERT OR REPLACE INTO settings(k,v) VALUES('schema_reset','1')");
+    }
+    $pdo->exec('COMMIT');
 }
 
 function migrate(PDO $pdo): void {

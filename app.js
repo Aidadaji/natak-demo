@@ -43,7 +43,7 @@ function api(a, body) {
       if (!r.ok) { var e = new Error(d.error || "Could not reach the server. Check your connection."); e.status = r.status; throw e; }
       if (d.state) {
         ST = d.state; paintCoins();
-        var diff = coins() - (before == null ? coins() : before), quiet = a === "login" || a === "logout" || a === "state" || a === "wallet";
+        var diff = coins() - (before == null ? coins() : before), quiet = a === "reset" || a === "login" || a === "logout" || a === "state" || a === "wallet";
         if (a === "ad_done") showDelta("+" + d.earned + "  −" + d.spent + " coins", "both");
         else if (!quiet && diff > 0) showDelta("+" + diff + " coins", "plus");
         else if (!quiet && diff < 0) showDelta("−" + (-diff) + " coins", "minus");
@@ -292,7 +292,18 @@ function authSheet(kind, why) {
     '<label class="field"><span>Password' + (up ? " (6 characters or more)" : "") + '</span><input id="fPass" name="password" type="password" autocomplete="' + (up ? "new-password" : "current-password") + '" required></label>' +
     '<div class="formerr" id="authErr" role="alert"></div><button class="wide" type="submit">' + (up ? "Create account" : "Sign in") + '</button></form>' +
     '<button class="linkbtn" type="button" data-act="' + (up ? "login" : "signup") + '">' + (up ? "I already have an account" : "Create a new account") + '</button>' +
+    (up ? "" : '<button class="linkbtn" type="button" data-act="forgot">Forgot password?</button>') +
     '<button class="close" type="button" data-act="' + backAct() + '">Not now</button>');
+}
+function forgotSheet() {
+  var sup = ST.support ? "Contact support: " + ST.support + "." : "Contact support.";
+  openSheet('<h4>Reset your password</h4><p class="sub">' + esc(sup + " They will check it is you and send a 6-digit code. It works once, for 30 minutes.") + '</p>' +
+    '<form id="resetForm" novalidate>' +
+    '<label class="field"><span>Mobile number</span><input id="rPhone" inputmode="numeric" maxlength="14" autocomplete="tel-national" placeholder="10 digits" required></label>' +
+    '<label class="field"><span>6-digit code</span><input id="rCode" inputmode="numeric" maxlength="6" autocomplete="one-time-code" required></label>' +
+    '<label class="field"><span>New password (6 characters or more)</span><input id="rPass" type="password" autocomplete="new-password" required></label>' +
+    '<div class="formerr" id="resetErr" role="alert"></div><button class="wide" type="submit">Set new password</button></form>' +
+    '<button class="linkbtn" type="button" data-act="login">Back to sign in</button>');
 }
 function acctScreen() {
   var me = ST.me;
@@ -340,6 +351,7 @@ document.addEventListener("click", function (ev) {
   else if (act === "close") { closeSheet(); pendingBuy = null; }
   else if (act === "resume") { closeSheet(); pendingBuy = null; resume(); }
   else if (act === "ep") play(cur, parseInt(a.getAttribute("data-ep"), 10));
+  else if (act === "forgot") forgotSheet();
   else if (act === "signup" || act === "login") authSheet(act === "login" ? "signin" : "signup");
   else if (act === "logout") api("logout", {}).then(function () { closeSheet(); cur = null; go("home"); toast("Signed out"); }).catch(oops);
   else if (act === "copy") {
@@ -354,6 +366,16 @@ document.addEventListener("change", function (ev) {
   AUTO = ev.target.checked;
   try { localStorage.setItem("nt_auto", AUTO ? "1" : "0"); } catch (e) { /* storage may be blocked */ }
   toast(AUTO ? "Next episodes will unlock with your coins" : "You will be asked before coins are spent");
+});
+document.addEventListener("submit", function (ev) {
+  var f = ev.target; if (f.id !== "resetForm") return;
+  ev.preventDefault();
+  var btn = f.querySelector("button[type=submit]"), el = $("resetErr");
+  var body = { phone: $("rPhone").value.trim(), code: $("rCode").value.trim(), password: $("rPass").value };
+  if (body.password.length < 6) { el.textContent = "Use a password of 6 characters or more."; return; }
+  btn.disabled = true; el.textContent = "";
+  api("reset", body).then(function () { authSheet("signin", "Password changed. Sign in with the new one."); toast("Password changed"); })
+    .catch(function (e) { btn.disabled = false; var x = $("resetErr"); if (x) x.textContent = e.message; });
 });
 document.addEventListener("submit", function (ev) {
   var f = ev.target; if (f.id !== "authForm") return;

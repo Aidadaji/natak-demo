@@ -60,6 +60,22 @@ try {
             $pr = max(0, min(5000, (int) ($_POST['pass'] ?? $show['pass_rs'])));
             db()->prepare('UPDATE shows SET free_eps=?, ep_coins=?, pass_rs=? WHERE id=?')->execute([$n, $c, $pr, $show['id']]);
             $msg = h($show['title']) . ": first $n episodes free, $c coins per locked episode, show pass Rs $pr.";
+        } elseif ($act === 'resetcode') {
+            $phone = preg_replace('/\D/', '', (string) ($_POST['phone'] ?? ''));
+            if (strlen($phone) === 12 && str_starts_with($phone, '91')) $phone = substr($phone, 2);
+            elseif (strlen($phone) === 11 && $phone[0] === '0') $phone = substr($phone, 1);
+            $q = db()->prepare('SELECT id, name FROM users WHERE phone=? AND is_guest=0'); $q->execute([$phone]);
+            $acc = $q->fetch();
+            if (!$acc) $err = 'No account uses that mobile number.';
+            else {
+                $code = str_pad((string) random_int(0, 999999), 6, '0', STR_PAD_LEFT);
+                db()->prepare('UPDATE users SET reset_hash=?, reset_until=?, reset_fails=0 WHERE id=?')->execute([hash('sha256', $code), now() + 1800, $acc['id']]);
+                $msg = 'Reset code for ' . h((string) $acc['name']) . ' (' . h($phone) . '): <b style="font-size:20px;letter-spacing:2px">' . $code . '</b>. Valid for 30 minutes, one use. It is shown only once. Give it only to the person who owns this number.';
+            }
+        } elseif ($act === 'support') {
+            $t = trim(mb_substr((string) ($_POST['support'] ?? ''), 0, 120));
+            set_setting('support', $t === '' ? null : $t);
+            $msg = $t === '' ? 'Support contact removed.' : 'Support contact saved.';
         } elseif ($act === 'delete' && $show && $ep) {
             $q = db()->prepare('SELECT video_file FROM episodes WHERE show_id=? AND ep=?'); $q->execute([$show['id'], $ep]);
             $f = (string) $q->fetchColumn();
@@ -174,6 +190,17 @@ a{color:var(--marigold)}
     <div class="card tile"><b>₹<?= $one("SELECT COALESCE(SUM(amount),0) FROM orders WHERE status='paid_test'") ?></b><span>Test payments (<?= $one("SELECT COUNT(*) FROM orders WHERE status='paid_test'") ?>)</span></div>
     <div class="card tile"><b><?= (int) ($unl['coins'] ?? 0) + (int) ($unl['paid'] ?? 0) + (int) ($unl['invite'] ?? 0) ?> / <?= (int) ($unl['ad'] ?? 0) ?></b><span>Episodes unlocked with coins / with an ad</span></div>
   </div>
+
+  <h2>Accounts: password reset</h2>
+  <form class="card" method="post" autocomplete="off"><input type="hidden" name="csrf" value="<?= $csrf ?>"><input type="hidden" name="act" value="resetcode">
+    <p class="sub">When a viewer forgets their password, check it is really them, then make a one-time code here and send it to them. They enter it under "Forgot password?" in the app.</p>
+    <label>Viewer's mobile number <input name="phone" inputmode="numeric" maxlength="14" required></label>
+    <button type="submit">Make reset code</button>
+  </form>
+  <form class="card" method="post"><input type="hidden" name="csrf" value="<?= $csrf ?>"><input type="hidden" name="act" value="support">
+    <label>Support contact shown to viewers who forget their password (WhatsApp number or email) <input name="support" maxlength="120" value="<?= h((string) (setting('support') ?? '')) ?>"></label>
+    <button type="submit">Save</button>
+  </form>
 
   <h2>Coins</h2>
   <?php
