@@ -28,7 +28,7 @@ $readOnly = ['state', 'health', 'wallet'];
 if (!$post && !in_array($a, $readOnly, true)) fail(405, 'Use POST.');
 
 try {
-    if ($a === 'health') out(['ok' => true, 'php' => PHP_VERSION, 'sqlite' => in_array('sqlite', PDO::getAvailableDrivers(), true), 'storage' => str_contains(data_dir(), '_data') ? 'inside' : 'outside', 'schema' => setting('schema')]);
+    if ($a === 'health') out(['ok' => true, 'php' => PHP_VERSION, 'sqlite' => in_array('sqlite', PDO::getAvailableDrivers(), true), 'storage' => str_contains(data_dir(), '_data') ? 'inside' : 'outside', 'schema' => setting('schema'), 'build' => 4, 'feat' => setting('schema_feat'), 'tasks' => count(TASKS)]);
 
     $u = current_user(true);
     $uid = (int) $u['id'];
