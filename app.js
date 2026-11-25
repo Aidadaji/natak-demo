@@ -145,7 +145,7 @@ function vurl(sid, e) { return "video.php?show=" + encodeURIComponent(sid) + "&e
 /* Subtitles: one text track per episode when the admin uploaded a file; the CC button shows or hides it. */
 function setSubs(s, e) {
   while (vid.firstChild) vid.removeChild(vid.firstChild);
-  var has = !!s && s.subs.indexOf(e) > -1, b = $("ccBtn");
+  var has = !!s && (s.subs || []).indexOf(e) > -1, b = $("ccBtn");
   b.hidden = !has; b.classList.toggle("on", has && CC); b.setAttribute("aria-pressed", CC ? "true" : "false");
   if (!has) return;
   var tr = document.createElement("track");
@@ -311,7 +311,7 @@ function walletScreen() {
   openSheet('<h4>My coins</h4><div class="bal">' + '<b id="walBal">' + w.total + '</b><span class="sub" style="margin:0">' + w.paid + ' bought · ' + w.bonus + ' bonus</span></div>' +
     (w.next ? '<p class="note" style="margin:0 0 6px">' + w.next.n + ' bonus coins expire on ' + day(w.next.at) + '. Bonus coins are used first.</p>' : '<p class="note" style="margin:0 0 6px">Coins you buy never expire. Coins you earn last ' + E.bonusDays + ' days.</p>') +
     '<p class="sec">Daily check-in</p><div class="ladder">' + lad + '</div>' + check +
-    '<p class="sec">Today\'s tasks</p>' + ST.tasks.map(function (t) {
+    '<p class="sec">Today\'s tasks</p>' + (ST.tasks || []).map(function (t) {
       var ready = t.have >= t.need;
       return '<div class="task"><div class="t">' + esc(t.label) + '<span>' + t.have + ' of ' + t.need + ' done · +' + t.coins + ' coins</span></div><button type="button" data-act="task" data-task="' + t.id + '"' + (t.claimed || !ready || me.guest ? " disabled" : "") + '>' + (t.claimed ? "Claimed" : ready ? (me.guest ? "Sign in" : "Claim +" + t.coins) : "Not yet") + '</button></div>';
     }).join("") +
