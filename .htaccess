@@ -6,7 +6,7 @@ DirectoryIndex index.html
 RedirectMatch 404 ^/natak/\.git
 RedirectMatch 404 /\.git(/|$)
 RedirectMatch 404 /_data(/|$)
-RedirectMatch 404 /(mobile|\.github)(/|$)
+RedirectMatch 404 /(mobile|tests|\.github)(/|$)
 AddType application/manifest+json .webmanifest
 <IfModule mod_headers.c>
   Header always set X-Content-Type-Options "nosniff"

@@ -58,3 +58,11 @@ What that means for this price list:
 - Earned coins expire, bought coins do not, automatic unlock: https://www.qwe.edu.pl/tutorial/reelshort-free-watch-full-series/
 - Five rewarded ads a day and the coins, ads, subscription mix: https://spyro-soft.com/blog/media-and-entertainment/microdrama-monetisation-models-why-the-real-innovation-isnt-the-content-its-the-payment-stack and https://www.revenuecat.com/blog/growth/short-drama-mobile-acquisition-monetization
 - Kuku TV prices: https://www.hollywoodreporterindia.com/features/insight/indias-microdrama-boom-how-data-desire-and-aritifical-intelligence-are-reshaping-entertainment
+
+## Added 25 Nov 2026: daily tasks and the first top-up offer
+
+**Daily tasks (accounts only, bonus coins, expire in 7 days).** Finish 3 episodes: 2 coins. Finish 10 episodes: 4 coins. Share a show: 2 coins. Most a viewer can earn from tasks is 8 coins a day, less than one episode. With the check-in ladder (average 4 a day) a very active free viewer earns about 12 coins a day, a little over one locked episode, plus up to 5 ad unlocks. A 42-locked-episode show therefore still takes a free viewer about a week, which keeps buying worthwhile.
+
+**First top-up offer (one time per account).** The first coin pack gives 50% extra coins on the pack's base amount, as bonus coins that last 30 days. Rs 29 gives 90 coins instead of 60 (Rs 3.22 an episode). The aim is to turn a first-time visitor into a payer; the second purchase is at normal value. Accounts that had already bought a pack before this date do not get it.
+
+**Deleted accounts.** Coins left in a deleted account are written off in the ledger as "closed", so coins sold still match rupees received. The admin check now reads: issued = spent + expired or given up + still in wallets.

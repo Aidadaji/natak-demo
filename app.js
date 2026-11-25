@@ -4,6 +4,8 @@ var EP_MS = 12000;               // length of the stand-in picture when an episo
 var ST = null, cur = null, ep = 1;
 var raf = null, startAt = 0, elapsed = 0, paused = false, mode = "ph";
 var viewSent = false, adT = null, pendingBuy = null, toastT = null, deltaT = null, REF = "", AUTO = false;
+var Q = "", G = "", CC = true, swipedAt = 0, preFor = "", pre = document.createElement("video");
+pre.preload = "auto"; pre.muted = true;
 
 var $ = function (id) { return document.getElementById(id); };
 var vid = $("vid"), stage = $("stage");
@@ -23,6 +25,7 @@ try {
   REF = new URLSearchParams(location.search).get("ref") || "";
   if (REF) localStorage.setItem("nt_ref", REF); else REF = localStorage.getItem("nt_ref") || "";
   AUTO = localStorage.getItem("nt_auto") === "1";
+  CC = localStorage.getItem("nt_cc") !== "0";
 } catch (e) { /* storage may be blocked */ }
 
 /* Every change to the wallet is shown: the coin count updates and a +n / -n chip floats up. */
@@ -43,7 +46,7 @@ function api(a, body) {
       if (!r.ok) { var e = new Error(d.error || "Could not reach the server. Check your connection."); e.status = r.status; throw e; }
       if (d.state) {
         ST = d.state; paintCoins();
-        var diff = coins() - (before == null ? coins() : before), quiet = a === "reset" || a === "login" || a === "logout" || a === "state" || a === "wallet";
+        var diff = coins() - (before == null ? coins() : before), quiet = a === "reset" || a === "delete_account" || a === "login" || a === "logout" || a === "state" || a === "wallet";
         if (a === "ad_done") showDelta("+" + d.earned + "  −" + d.spent + " coins", "both");
         else if (!quiet && diff > 0) showDelta("+" + diff + " coins", "plus");
         else if (!quiet && diff < 0) showDelta("−" + (-diff) + " coins", "minus");
@@ -69,6 +72,11 @@ function renderHome() {
   $("contSec").hidden = !cont.length; $("rowCont").innerHTML = cont.map(function (s) { return card(s, "Continue episode " + s.last, s.last); }).join("");
   $("listSec").hidden = !list.length; $("rowList").innerHTML = list.map(function (s) { return card(s); }).join("");
   $("rowAll").innerHTML = ST.shows.map(function (s) { return card(s); }).join("");
+  $("rowTrend").innerHTML = ST.shows.slice().sort(function (a, b) { return b.views - a.views; }).slice(0, 6).map(function (s, i) { return card(s, "#" + (i + 1) + " · " + fmt(s.views) + " views"); }).join("");
+  var genres = []; ST.shows.forEach(function (s) { if (genres.indexOf(s.genre) < 0) genres.push(s.genre); });
+  if (G && genres.indexOf(G) < 0) G = "";
+  $("chips").innerHTML = '<button type="button" data-genre=""' + (G ? "" : ' class="on" aria-pressed="true"') + '>All</button>' + genres.map(function (g) { return '<button type="button" data-genre="' + esc(g) + '"' + (G === g ? ' class="on" aria-pressed="true"' : "") + '>' + esc(g) + '</button>'; }).join("");
+  applyFilter();
   $("rowHidden").innerHTML = by(function (s) { return s.shelf.indexOf("hidden") > -1; }).map(function (s) { return card(s); }).join("");
   $("rowRevenge").innerHTML = by(function (s) { return s.shelf.indexOf("revenge") > -1; }).map(function (s) { return card(s); }).join("");
   $("foot").textContent = "The first " + h.free + " episodes of " + h.title + " are free. Later episodes cost " + h.price + " coins each. Earn coins with a daily check-in, an ad, or by inviting a friend, or buy a pack.";
@@ -76,6 +84,16 @@ function renderHome() {
   $("acctBtn").className = "pill" + (me.vip ? " vip" : "");
   $("who").textContent = me.guest ? "Guest" : me.name;
   paintCoins();
+}
+/* Search and genre chips narrow the catalogue to a result grid; with neither set the shelves show. */
+function applyFilter() {
+  var q = Q.trim().toLowerCase(), on = !!(q || G);
+  $("home").classList.toggle("searching", on); $("resSec").hidden = !on;
+  if (!on) return;
+  var hits = ST.shows.filter(function (s) { return (!G || s.genre === G) && (!q || (s.title + " " + s.genre + " " + s.line).toLowerCase().indexOf(q) > -1); });
+  $("resH").textContent = (G || "Results") + (q ? ' for "' + Q.trim() + '"' : "") + " (" + hits.length + ")";
+  $("rowRes").innerHTML = hits.map(function (s) { return card(s); }).join("");
+  $("resEmpty").hidden = hits.length > 0;
 }
 function go(view) {
   $("home").classList.toggle("on", view === "home");
@@ -117,13 +135,33 @@ function play(sid, e) {
   closeSheet(); stage.classList.remove("paused");
   if (s.videos.indexOf(e) > -1) {
     mode = "vid"; stage.classList.add("hasvid");
-    vid.src = "video.php?show=" + encodeURIComponent(sid) + "&ep=" + e;
+    vid.src = vurl(sid, e);
+    setSubs(s, e);
     var p = vid.play();
     if (p && p.catch) p.catch(function () { stage.classList.add("paused"); });
   } else { startPlaceholder(); }
 }
+function vurl(sid, e) { return "video.php?show=" + encodeURIComponent(sid) + "&ep=" + e; }
+/* Subtitles: one text track per episode when the admin uploaded a file; the CC button shows or hides it. */
+function setSubs(s, e) {
+  while (vid.firstChild) vid.removeChild(vid.firstChild);
+  var has = !!s && s.subs.indexOf(e) > -1, b = $("ccBtn");
+  b.hidden = !has; b.classList.toggle("on", has && CC); b.setAttribute("aria-pressed", CC ? "true" : "false");
+  if (!has) return;
+  var tr = document.createElement("track");
+  tr.kind = "subtitles"; tr.srclang = "en"; tr.label = "Subtitles"; tr.src = "sub.php?show=" + encodeURIComponent(s.id) + "&ep=" + e;
+  vid.appendChild(tr); tr.track.mode = CC ? "showing" : "hidden";
+}
+/* Once an episode is playing, start fetching the next one so the swipe to it does not wait. */
+function preloadNext() {
+  var s = cur && show(cur), n = ep + 1, key = cur + ":" + n;
+  if (!s || preFor === key) return;
+  if (n <= s.eps && canWatch(s, n) && s.videos.indexOf(n) > -1) { preFor = key; pre.src = vurl(cur, n); pre.load(); }
+}
+function nextEp() { play(cur, ep + 1); }
+function prevEp() { if (ep > 1) play(cur, ep - 1); else toast("This is the first episode"); }
 function startPlaceholder() {
-  mode = "ph"; stage.classList.remove("hasvid"); vid.removeAttribute("src");
+  mode = "ph"; stage.classList.remove("hasvid"); vid.removeAttribute("src"); setSubs(null, 0);
   startAt = performance.now(); raf = requestAnimationFrame(tick);
 }
 function tick(now) {
@@ -160,6 +198,7 @@ vid.addEventListener("timeupdate", function () {
   if (!viewSent && vid.currentTime >= 3) { viewSent = true; sendView(false, vid.currentTime); }
 });
 vid.addEventListener("play", function () { stage.classList.remove("paused"); });
+vid.addEventListener("playing", function () { if (mode === "vid") setTimeout(preloadNext, 1200); });
 vid.addEventListener("pause", function () { if (mode === "vid" && !vid.ended) stage.classList.add("paused"); });
 vid.addEventListener("ended", function () { if (mode === "vid") onEnd(vid.duration); });
 vid.addEventListener("error", function () { if (mode === "vid" && vid.getAttribute("src")) { toast("This video could not load. Showing the sample picture.", true); startPlaceholder(); } });
@@ -206,17 +245,18 @@ function adScreen() {
   }).catch(oops);
 }
 function store(why, tab) {
-  var E = ST.econ, s = cur ? show(cur) : ST.shows[0], per = s.price, h = "";
+  var E = ST.econ, s = cur ? show(cur) : ST.shows[0], per = s.price, h = "", first = ST.me.firstOffer;
   var packs = E.packs.map(function (p, i) {
-    var total = p.coins + p.bonus, epsN = Math.floor(total / per);
-    return opt("buy", ' data-kind="coins" data-pack="' + p.id + '"', COIN + " " + p.coins + (p.bonus ? ' <span style="display:inline;color:var(--leaf);font-weight:700">+' + p.bonus + " bonus</span>" : ""),
+    var extra = first ? Math.floor(p.coins * E.firstPct / 100) : 0, total = p.coins + p.bonus + extra, epsN = Math.floor(total / per);
+    return opt("buy", ' data-kind="coins" data-pack="' + p.id + '"', COIN + " " + p.coins + (p.bonus + extra ? ' <span style="display:inline;color:var(--leaf);font-weight:700">+' + (p.bonus + extra) + " bonus</span>" : ""),
       "About " + epsN + " episodes. ₹" + (p.rs / epsN).toFixed(2) + " an episode.", "₹" + p.rs, i === 2 ? "best" : "");
   }).join("");
   var plans = E.plans.map(function (p, i) {
     return opt("buy", ' data-kind="' + p.id + '"', "Everything for " + p.label, "Every show and every episode. No coins, no ads.", "₹" + p.rs, i === 1 ? "best" : "");
   }).join("");
   h += '<h4>' + (tab === "plans" ? "Watch everything" : "Get coins") + '</h4><p class="sub">' + esc(why || "You have " + coins() + " coins. One episode costs " + per + ".") + '</p>';
-  h += tab === "plans" ? plans + '<p class="sec">Or buy coins</p>' + packs : packs + '<p class="sec">Or skip coins</p>' + plans;
+  var offer = first ? '<div class="offer">First top-up offer: ' + E.firstPct + '% extra coins on the pack you choose. One time only.</div>' : "";
+  h += tab === "plans" ? plans + '<p class="sec">Or buy coins</p>' + offer + packs : offer + packs + '<p class="sec">Or skip coins</p>' + plans;
   h += '<p class="note">Coins you buy never expire. Bonus coins that come with a pack last ' + E.packBonusDays + ' days and are used first. Test mode: no money moves.</p>';
   h += '<button class="close" type="button" data-act="' + backAct() + '">Back</button>';
   openSheet(h);
@@ -228,7 +268,7 @@ function buy(kind, pack) {
   if (kind === "coins") body.pack = pack; else if (kind === "pass") body.show = cur;
   api("order", body).then(function (d) {
     var label;
-    if (kind === "coins") { var p = ST.econ.packs.filter(function (x) { return x.id === pack; })[0]; label = p.coins + " coins" + (p.bonus ? " + " + p.bonus + " bonus" : ""); }
+    if (kind === "coins") { var p = ST.econ.packs.filter(function (x) { return x.id === pack; })[0]; var fx = ST.me.firstOffer ? Math.floor(p.coins * ST.econ.firstPct / 100) : 0; label = p.coins + " coins" + (p.bonus + fx ? " + " + (p.bonus + fx) + " bonus" : ""); }
     else if (kind === "pass") label = "Own " + s.title;
     else label = "Everything for " + ST.econ.plans.filter(function (x) { return x.id === kind; })[0].label;
     openSheet('<h4>Pay by UPI</h4><p class="sub">' + esc(label) + '</p><div class="pay">Order #' + d.order + '<div class="amt">₹' + d.amount + '</div>Test mode. No money moves and no UPI app opens.</div>' +
@@ -271,6 +311,10 @@ function walletScreen() {
   openSheet('<h4>My coins</h4><div class="bal">' + '<b id="walBal">' + w.total + '</b><span class="sub" style="margin:0">' + w.paid + ' bought · ' + w.bonus + ' bonus</span></div>' +
     (w.next ? '<p class="note" style="margin:0 0 6px">' + w.next.n + ' bonus coins expire on ' + day(w.next.at) + '. Bonus coins are used first.</p>' : '<p class="note" style="margin:0 0 6px">Coins you buy never expire. Coins you earn last ' + E.bonusDays + ' days.</p>') +
     '<p class="sec">Daily check-in</p><div class="ladder">' + lad + '</div>' + check +
+    '<p class="sec">Today\'s tasks</p>' + ST.tasks.map(function (t) {
+      var ready = t.have >= t.need;
+      return '<div class="task"><div class="t">' + esc(t.label) + '<span>' + t.have + ' of ' + t.need + ' done · +' + t.coins + ' coins</span></div><button type="button" data-act="task" data-task="' + t.id + '"' + (t.claimed || !ready || me.guest ? " disabled" : "") + '>' + (t.claimed ? "Claimed" : ready ? (me.guest ? "Sign in" : "Claim +" + t.coins) : "Not yet") + '</button></div>';
+    }).join("") +
     '<button class="wide alt" type="button" data-act="store">Get coins</button><button class="wide alt" type="button" data-act="share">Invite a friend: +' + E.invite + ' coins</button>' +
     '<label class="check" for="autoUn" style="margin-top:12px"><input type="checkbox" id="autoUn"' + (AUTO ? " checked" : "") + '> Unlock the next episodes automatically while I have coins</label>' +
     '<p class="sec">History</p><ul class="hist" id="hist"><li><div class="w">Loading...</div></li></ul>' +
@@ -291,6 +335,7 @@ function authSheet(kind, why) {
     '<label class="field"><span>Mobile number</span><input id="fPhone" name="phone" inputmode="numeric" maxlength="14" autocomplete="tel-national" placeholder="10 digits" required></label>' +
     '<label class="field"><span>Password' + (up ? " (6 characters or more)" : "") + '</span><input id="fPass" name="password" type="password" autocomplete="' + (up ? "new-password" : "current-password") + '" required></label>' +
     '<div class="formerr" id="authErr" role="alert"></div><button class="wide" type="submit">' + (up ? "Create account" : "Sign in") + '</button></form>' +
+    (up ? '<p class="fine">By creating an account you agree to the <a href="legal.php?p=terms">Terms</a> and <a href="legal.php?p=privacy">Privacy policy</a>.</p>' : "") +
     '<button class="linkbtn" type="button" data-act="' + (up ? "login" : "signup") + '">' + (up ? "I already have an account" : "Create a new account") + '</button>' +
     (up ? "" : '<button class="linkbtn" type="button" data-act="forgot">Forgot password?</button>') +
     '<button class="close" type="button" data-act="' + backAct() + '">Not now</button>');
@@ -319,7 +364,26 @@ function acctScreen() {
     '<dt>Ad unlocks left today</dt><dd>' + me.adsLeft + ' of ' + me.adCap + '</dd></dl></div>' +
     '<button class="wide" type="button" data-act="wallet" style="margin-top:14px">My coins and history</button>' +
     '<button class="wide alt" type="button" data-act="share">Invite a friend</button>' +
-    '<button class="wide alt" type="button" data-act="logout">Sign out</button><button class="close" type="button" data-act="close">Close</button>');
+    '<button class="wide alt" type="button" data-act="feedback">Help and feedback</button>' +
+    '<button class="wide alt" type="button" data-act="logout">Sign out</button>' +
+    '<button class="wide danger" type="button" data-act="delacct">Delete account</button>' +
+    '<p class="fine"><a href="legal.php?p=privacy">Privacy policy</a> · <a href="legal.php?p=terms">Terms of use</a></p>' +
+    '<button class="close" type="button" data-act="close">Close</button>');
+}
+function feedbackSheet() {
+  var me = ST.me;
+  openSheet('<h4>Help and feedback</h4><p class="sub">' + esc(ST.support ? "Tell us what went wrong or what you would like. You can also reach us at " + ST.support + "." : "Tell us what went wrong or what you would like.") + '</p>' +
+    '<form id="fbForm" novalidate><label class="field"><span>Your message</span><textarea id="fbMsg" maxlength="1000" required></textarea></label>' +
+    (me.guest ? '<label class="field"><span>Mobile number or email, if you want a reply</span><input id="fbContact" maxlength="120" autocomplete="email"></label>' : "") +
+    '<div class="formerr" id="fbErr" role="alert"></div><button class="wide" type="submit">Send</button></form>' +
+    '<button class="close" type="button" data-act="' + backAct() + '">Close</button>');
+}
+function deleteSheet() {
+  var me = ST.me;
+  openSheet('<h4>Delete your account</h4><p class="sub">This removes your account, your ' + me.coins.total + ' coins, every episode you unlocked, any plan or show pass, your list and your history. It happens at once and cannot be undone.</p>' +
+    '<form id="delForm" novalidate><label class="field"><span>Enter your password to confirm</span><input id="delPass" type="password" autocomplete="current-password" required></label>' +
+    '<div class="formerr" id="delErr" role="alert"></div><button class="wide danger" type="submit">Delete my account for ever</button></form>' +
+    '<button class="wide" type="button" data-act="close">Keep my account</button>');
 }
 function afterAuth() {
   closeSheet(); if (!inPlayer()) renderHome(); else { updateSide(); $("who").textContent = ST.me.guest ? "Guest" : ST.me.name; }
@@ -333,6 +397,8 @@ function afterPaid() {
 
 /* ---------- EVENTS ---------- */
 document.addEventListener("click", function (ev) {
+  var g = ev.target.closest("[data-genre]");
+  if (g) { G = g.getAttribute("data-genre"); renderHome(); return; }
   var t = ev.target.closest("[data-show]");
   if (t) { play(t.getAttribute("data-show"), parseInt(t.getAttribute("data-ep"), 10) || 1); return; }
   var a = ev.target.closest("[data-act]");
@@ -352,6 +418,9 @@ document.addEventListener("click", function (ev) {
   else if (act === "resume") { closeSheet(); pendingBuy = null; resume(); }
   else if (act === "ep") play(cur, parseInt(a.getAttribute("data-ep"), 10));
   else if (act === "forgot") forgotSheet();
+  else if (act === "feedback") feedbackSheet();
+  else if (act === "delacct") deleteSheet();
+  else if (act === "task") { a.disabled = true; api("task_claim", { task: a.getAttribute("data-task") }).then(function (d) { toast("Task done: +" + d.earned + " coins"); walletScreen(); }).catch(function (e) { a.disabled = false; oops(e); }); }
   else if (act === "signup" || act === "login") authSheet(act === "login" ? "signin" : "signup");
   else if (act === "logout") api("logout", {}).then(function () { closeSheet(); cur = null; go("home"); toast("Signed out"); }).catch(oops);
   else if (act === "copy") {
@@ -366,6 +435,17 @@ document.addEventListener("change", function (ev) {
   AUTO = ev.target.checked;
   try { localStorage.setItem("nt_auto", AUTO ? "1" : "0"); } catch (e) { /* storage may be blocked */ }
   toast(AUTO ? "Next episodes will unlock with your coins" : "You will be asked before coins are spent");
+});
+document.addEventListener("submit", function (ev) {
+  var f = ev.target; if (f.id !== "fbForm" && f.id !== "delForm") return;
+  ev.preventDefault();
+  var btn = f.querySelector("button[type=submit]"), fb = f.id === "fbForm", err = $(fb ? "fbErr" : "delErr");
+  btn.disabled = true; err.textContent = "";
+  var call = fb ? api("feedback", { msg: $("fbMsg").value, contact: $("fbContact") ? $("fbContact").value : "" }) : api("delete_account", { password: $("delPass").value });
+  call.then(function () {
+    if (fb) { closeSheet(); toast("Thank you. Your message was sent."); if (cur && inPlayer()) resume(); return; }
+    closeSheet(); cur = null; pendingBuy = null; go("home"); toast("Your account was deleted");
+  }).catch(function (e) { btn.disabled = false; var x = $(fb ? "fbErr" : "delErr"); if (x) x.textContent = e.message; });
 });
 document.addEventListener("submit", function (ev) {
   var f = ev.target; if (f.id !== "resetForm") return;
@@ -390,9 +470,32 @@ document.addEventListener("submit", function (ev) {
   }).catch(function (e) { btn.disabled = false; var el = $("authErr"); if (el) el.textContent = e.message; });
 });
 $("backBtn").addEventListener("click", function () { closeSheet(); go("home"); });
-$("nextBtn").addEventListener("click", function () { play(cur, ep + 1); });
-$("tap").addEventListener("click", togglePause);
-$("tap").addEventListener("keydown", function (e) { if (e.key === " " || e.key === "Enter") { e.preventDefault(); togglePause(); } });
+$("nextBtn").addEventListener("click", nextEp);
+$("tap").addEventListener("click", function () { if (Date.now() - swipedAt > 500) togglePause(); });
+$("tap").addEventListener("keydown", function (e) {
+  if (e.key === " " || e.key === "Enter") { e.preventDefault(); togglePause(); }
+  else if (e.key === "ArrowDown") { e.preventDefault(); nextEp(); }
+  else if (e.key === "ArrowUp") { e.preventDefault(); prevEp(); }
+});
+/* Swipe up for the next episode, down for the one before. */
+(function () {
+  var y0 = null, x0 = 0, tap = $("tap");
+  tap.addEventListener("touchstart", function (e) { if (e.touches.length === 1) { y0 = e.touches[0].clientY; x0 = e.touches[0].clientX; } }, { passive: true });
+  tap.addEventListener("touchend", function (e) {
+    if (y0 === null) return;
+    var t = e.changedTouches[0], dy = t.clientY - y0, dx = t.clientX - x0; y0 = null;
+    if (Math.abs(dy) < 70 || Math.abs(dy) < Math.abs(dx) * 1.5) return;
+    swipedAt = Date.now(); if (dy < 0) nextEp(); else prevEp();
+  }, { passive: true });
+  tap.addEventListener("touchcancel", function () { y0 = null; }, { passive: true });
+})();
+$("ccBtn").addEventListener("click", function () {
+  CC = !CC; try { localStorage.setItem("nt_cc", CC ? "1" : "0"); } catch (e) { /* storage may be blocked */ }
+  var b = $("ccBtn"); b.classList.toggle("on", CC); b.setAttribute("aria-pressed", CC ? "true" : "false");
+  if (vid.textTracks[0]) vid.textTracks[0].mode = CC ? "showing" : "hidden";
+  toast(CC ? "Subtitles on" : "Subtitles off");
+});
+$("q").addEventListener("input", function () { Q = this.value; applyFilter(); });
 $("listBtn").addEventListener("click", function () { hold(); listScreen(); });
 $("shareBtn").addEventListener("click", function () { hold(); shareScreen(); });
 $("likeBtn").addEventListener("click", function () { api("like", { show: cur }).then(updateSide).catch(oops); });

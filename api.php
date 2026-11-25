@@ -145,6 +145,54 @@ try {
         $extra['reset'] = true;
         break;
 
+    case 'task_claim':
+        if ($u['is_guest']) fail(401, 'Create a free account to earn task coins.');
+        $tid = is_string($in['task'] ?? null) ? $in['task'] : '';
+        if (!isset(TASKS[$tid])) fail(400, 'Unknown task.');
+        tx_begin();
+        $mine = null; foreach (tasks_for($u) as $t) if ($t['id'] === $tid) $mine = $t;
+        if ($mine['claimed']) fail(409, 'Already claimed today.');
+        if ($mine['have'] < $mine['need']) fail(400, 'Not finished yet: ' . $mine['have'] . ' of ' . $mine['need'] . '.');
+        $c = db()->prepare('INSERT OR IGNORE INTO task_claims(user_id,task,day,created) VALUES(?,?,?,?)'); $c->execute([$uid, $tid, today(), now()]);
+        if (!$c->rowCount()) fail(409, 'Already claimed today.');
+        coins_grant($uid, $mine['coins'], 'bonus', ECON['bonus_days'], 'task', 'Task: ' . $mine['label']);
+        tx_commit();
+        $extra['earned'] = $mine['coins'];
+        break;
+
+    case 'feedback':
+        $msg = trim(is_string($in['msg'] ?? null) ? $in['msg'] : '');
+        $contact = trim(mb_substr(is_string($in['contact'] ?? null) ? $in['contact'] : '', 0, 120));
+        if (mb_strlen($msg) < 5) fail(400, 'Please write a few words about the problem.');
+        if (mb_strlen($msg) > 1000) fail(400, 'Please keep it under 1000 characters.');
+        $q = db()->prepare('SELECT COUNT(*) FROM feedback WHERE user_id=? AND created>?'); $q->execute([$uid, now() - 86400]);
+        if ((int) $q->fetchColumn() >= 5) fail(429, 'You have sent 5 messages today. Try again tomorrow.');
+        db()->prepare('INSERT INTO feedback(user_id,name,contact,msg,created) VALUES(?,?,?,?,?)')->execute([$uid, $u['is_guest'] ? 'Guest' : $u['name'], $contact !== '' ? $contact : (string) ($u['phone'] ?? ''), $msg, now()]);
+        $extra['sent'] = true;
+        break;
+
+    case 'delete_account':   // removes the account and everything tied to it; payment records are kept without the person
+        if ($u['is_guest']) fail(401, 'You are not signed in.');
+        $pass = is_string($in['password'] ?? null) ? $in['password'] : '';
+        if (!password_verify($pass, (string) $u['pass_hash'])) { usleep(400000); fail(401, 'Wrong password.'); }
+        tx_begin();
+        coins_expire($uid);
+        $lost = coins_total($uid);   // the wallet is written off in the ledger, so coins sold still match rupees received
+        db()->prepare('UPDATE coin_lots SET remaining=0 WHERE user_id=?')->execute([$uid]);
+        if ($lost > 0) coins_log($uid, -$lost, 'closed', 'Account deleted');
+        foreach (['sessions', 'unlocks', 'passes', 'likes', 'saves', 'ads', 'coin_lots', 'task_claims'] as $t) db()->prepare("DELETE FROM $t WHERE user_id=?")->execute([$uid]);
+        db()->prepare('UPDATE coin_tx SET user_id=0 WHERE user_id=?')->execute([$uid]);
+        db()->prepare('DELETE FROM referrals WHERE friend_id=? OR inviter_id=?')->execute([$uid, $uid]);
+        foreach (['views', 'shares', 'orders'] as $t) db()->prepare("UPDATE $t SET user_id=0 WHERE user_id=?")->execute([$uid]);
+        db()->prepare("UPDATE feedback SET user_id=0, name='Deleted account', contact='' WHERE user_id=?")->execute([$uid]);
+        db()->prepare('DELETE FROM users WHERE id=?')->execute([$uid]);
+        tx_commit();
+        setcookie(COOKIE, '', ['expires' => 1, 'path' => '/', 'secure' => is_https(), 'httponly' => true, 'samesite' => 'Lax']);
+        unset($_COOKIE[COOKIE]);
+        $u = current_user(true); $uid = (int) $u['id'];
+        $extra['deleted'] = true;
+        break;
+
     case 'logout':
         $tok = (string) ($_COOKIE[COOKIE] ?? '');
         db()->prepare('DELETE FROM sessions WHERE token_hash=?')->execute([hash('sha256', $tok)]);
@@ -278,7 +326,13 @@ try {
             db()->prepare("UPDATE orders SET status='paid_test' WHERE id=?")->execute([$o['id']]);
             coins_grant($uid, $p['coins'], 'paid', 0, 'purchase', 'Bought ' . $p['coins'] . ' coins for Rs ' . $p['rs']);
             coins_grant($uid, $p['bonus'], 'bonus', ECON['pack_bonus_days'], 'pack_bonus', 'Bonus coins with your pack');
-            $extra['earned'] = $p['coins'] + $p['bonus'];
+            $first = 0;
+            if (!(int) $u['first_bonus']) {   // one time per account
+                $first = intdiv($p['coins'] * FIRST_BONUS_PCT, 100);
+                db()->prepare('UPDATE users SET first_bonus=1 WHERE id=?')->execute([$uid]);
+                coins_grant($uid, $first, 'bonus', ECON['pack_bonus_days'], 'first_bonus', 'First top-up bonus');
+            }
+            $extra['earned'] = $p['coins'] + $p['bonus'] + $first;
         } elseif ($o['kind'] === 'pass') {
             db()->prepare("UPDATE orders SET status='paid_test' WHERE id=?")->execute([$o['id']]);
             db()->prepare('INSERT OR IGNORE INTO passes(user_id,show_id,created) VALUES(?,?,?)')->execute([$uid, $o['show_id'], now()]);
@@ -317,6 +371,8 @@ function state(array $u): array {
     foreach ($q as $r) $open[$r['show_id']][] = (int) $r['ep'];
     $vids = [];
     foreach (db()->query('SELECT show_id, ep, video_file FROM episodes WHERE video_file IS NOT NULL ORDER BY ep') as $r) if (video_path($r['video_file'])) $vids[$r['show_id']][] = (int) $r['ep'];
+    $subs = [];
+    foreach (db()->query('SELECT show_id, ep FROM subs ORDER BY ep') as $r) $subs[$r['show_id']][] = (int) $r['ep'];
     $titles = [];
     foreach (db()->query('SELECT show_id, ep, title FROM ep_meta') as $r) $titles[$r['show_id']][(int) $r['ep']] = $r['title'];
     $shows = [];
@@ -327,7 +383,7 @@ function state(array $u): array {
         $shows[] = ['id' => $id, 'title' => $s['title'], 'genre' => $s['genre'], 'line' => $s['line'], 'eps' => (int) $s['eps'], 'free' => (int) $s['free_eps'],
             'c' => [$s['c0'], $s['c1']], 'who' => json_decode($s['who'], true), 'caps' => json_decode($s['caps'], true), 'shelf' => explode(',', (string) $s['shelf']),
             'views' => (int) ($views[$id] ?? 0), 'likes' => (int) ($likes[$id] ?? 0), 'saves' => (int) ($saves[$id] ?? 0), 'shares' => (int) ($shares[$id] ?? 0),
-            'liked' => isset($liked[$id]), 'saved' => isset($saved[$id]), 'pass' => isset($pass[$id]), 'open' => $open[$id] ?? [], 'videos' => $vids[$id] ?? [], 'last' => (int) ($last[$id] ?? 0),
+            'liked' => isset($liked[$id]), 'saved' => isset($saved[$id]), 'pass' => isset($pass[$id]), 'open' => $open[$id] ?? [], 'videos' => $vids[$id] ?? [], 'subs' => $subs[$id] ?? [], 'last' => (int) ($last[$id] ?? 0),
             'poster' => poster_path($id) ? 'poster.php?show=' . $id . '&v=' . filemtime(poster_path($id)) : null, 'titles' => (object) ($titles[$id] ?? []),
             'price' => (int) $s['ep_coins'], 'passRs' => (int) $s['pass_rs'],
             // the pass is only offered where it beats buying the locked episodes with coins
@@ -337,9 +393,10 @@ function state(array $u): array {
     $packs = []; foreach (PACKS as $id => $p) $packs[] = ['id' => $id] + $p;
     $plans = []; foreach (PLANS as $id => $p) $plans[] = ['id' => $id] + $p;
     return ['me' => ['guest' => (bool) $u['is_guest'], 'name' => $u['name'], 'vip' => (int) $u['vip_until'] > now(), 'vipUntil' => (int) $u['vip_until'],
-        'adsLeft' => ads_left($u), 'adCap' => AD_CAP, 'ref' => $u['is_guest'] ? null : $u['ref_code'], 'coins' => coins_wallet($uid),
+        'firstOffer' => !(int) ($u['first_bonus'] ?? 0), 'adsLeft' => ads_left($u), 'adCap' => AD_CAP, 'ref' => $u['is_guest'] ? null : $u['ref_code'], 'coins' => coins_wallet($uid),
         'checkin' => ['done' => $c['done'], 'day' => $c['day'], 'reward' => $c['reward']]],
         'support' => (string) (setting('support') ?? ''),
-        'econ' => ['packs' => $packs, 'plans' => $plans, 'welcome' => ECON['welcome'], 'invite' => ECON['invite'], 'ladder' => ECON['checkin'], 'bonusDays' => ECON['bonus_days'], 'packBonusDays' => ECON['pack_bonus_days']],
+        'tasks' => tasks_for($u),
+        'econ' => ['packs' => $packs, 'plans' => $plans, 'firstPct' => FIRST_BONUS_PCT, 'welcome' => ECON['welcome'], 'invite' => ECON['invite'], 'ladder' => ECON['checkin'], 'bonusDays' => ECON['bonus_days'], 'packBonusDays' => ECON['pack_bonus_days']],
         'shows' => $shows];
 }

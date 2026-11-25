@@ -72,6 +72,33 @@ try {
                 db()->prepare('UPDATE users SET reset_hash=?, reset_until=?, reset_fails=0 WHERE id=?')->execute([hash('sha256', $code), now() + 1800, $acc['id']]);
                 $msg = 'Reset code for ' . h((string) $acc['name']) . ' (' . h($phone) . '): <b style="font-size:20px;letter-spacing:2px">' . $code . '</b>. Valid for 30 minutes, one use. It is shown only once. Give it only to the person who owns this number.';
             }
+        } elseif ($act === 'subs') {
+            $f = $_FILES['sub'] ?? null;
+            if (!$show || $ep < 1 || $ep > (int) $show['eps']) $err = 'Pick a show and a valid episode number.';
+            elseif (!empty($_POST['remove'])) {
+                $old = sub_path($show['id'], $ep); if ($old) @unlink($old);
+                db()->prepare('DELETE FROM subs WHERE show_id=? AND ep=?')->execute([$show['id'], $ep]);
+                $msg = 'Subtitles removed from episode ' . $ep . '.';
+            }
+            elseif (!$f || $f['error'] !== UPLOAD_ERR_OK || $f['size'] > 300000) $err = 'Choose a .vtt or .srt file under 300 KB.';
+            else {
+                $txt = (string) file_get_contents($f['tmp_name']);
+                $txt = preg_replace('/^\xEF\xBB\xBF/', '', str_replace(["\r\n", "\r"], "\n", $txt));
+                if (!mb_check_encoding($txt, 'UTF-8') || !str_contains($txt, '-->')) $err = 'That does not look like a subtitle file. Save it as UTF-8 .vtt or .srt.';
+                else {
+                    if (!str_starts_with(ltrim($txt), 'WEBVTT')) $txt = "WEBVTT\n\n" . preg_replace('/(\d\d:\d\d:\d\d),(\d{3})/', '$1.$2', $txt);   // .srt to .vtt
+                    @mkdir(data_dir() . '/subs', 0700, true);
+                    $name = bin2hex(random_bytes(10)) . '.vtt';
+                    $old = sub_path($show['id'], $ep);
+                    file_put_contents(data_dir() . '/subs/' . $name, $txt);
+                    if ($old) @unlink($old);
+                    db()->prepare('INSERT INTO subs(show_id,ep,file) VALUES(?,?,?) ON CONFLICT(show_id,ep) DO UPDATE SET file=excluded.file')->execute([$show['id'], $ep, $name]);
+                    $msg = h($show['title']) . ' episode ' . $ep . ': subtitles saved.';
+                }
+            }
+        } elseif ($act === 'fbdone') {
+            db()->prepare('UPDATE feedback SET done=1 WHERE id=?')->execute([(int) ($_POST['id'] ?? 0)]);
+            $msg = 'Marked as handled.';
         } elseif ($act === 'support') {
             $t = trim(mb_substr((string) ($_POST['support'] ?? ''), 0, 120));
             set_setting('support', $t === '' ? null : $t);
@@ -206,8 +233,9 @@ a{color:var(--marigold)}
   <?php
     $tx = $by("SELECT reason, COALESCE(SUM(delta),0) FROM coin_tx GROUP BY reason");
     $sold = (int) ($tx['purchase'] ?? 0); $packBonus = (int) ($tx['pack_bonus'] ?? 0);
-    $free = (int) ($tx['welcome'] ?? 0) + (int) ($tx['checkin'] ?? 0) + (int) ($tx['invite'] ?? 0);
-    $adCoins = (int) ($tx['ad'] ?? 0); $spent = -(int) ($tx['unlock'] ?? 0); $expired = -(int) ($tx['expired'] ?? 0);
+    $free = (int) ($tx['welcome'] ?? 0) + (int) ($tx['checkin'] ?? 0) + (int) ($tx['invite'] ?? 0) + (int) ($tx['task'] ?? 0);
+    $packBonus += (int) ($tx['first_bonus'] ?? 0);
+    $adCoins = (int) ($tx['ad'] ?? 0); $spent = -(int) ($tx['unlock'] ?? 0); $expired = -(int) ($tx['expired'] ?? 0) - (int) ($tx['closed'] ?? 0);
     $held = $by("SELECT kind, COALESCE(SUM(remaining),0) FROM coin_lots WHERE remaining>0 AND (expires=0 OR expires>" . now() . ") GROUP BY kind");
     $packRs = $one("SELECT COALESCE(SUM(amount),0) FROM orders WHERE status='paid_test' AND kind='coins'");
     $planRs = $one("SELECT COALESCE(SUM(amount),0) FROM orders WHERE status='paid_test' AND kind NOT IN ('coins','pass','ep')");
@@ -217,11 +245,11 @@ a{color:var(--marigold)}
   ?>
   <div class="tiles">
     <div class="card tile"><b><?= $sold ?></b><span>Coins sold in packs (₹<?= $packRs ?>)</span></div>
-    <div class="card tile"><b><?= $packBonus ?></b><span>Bonus coins given with packs</span></div>
-    <div class="card tile"><b><?= $free ?></b><span>Free coins: welcome <?= (int) ($tx['welcome'] ?? 0) ?>, check-in <?= (int) ($tx['checkin'] ?? 0) ?>, invites <?= (int) ($tx['invite'] ?? 0) ?></span></div>
+    <div class="card tile"><b><?= $packBonus ?></b><span>Bonus coins given with packs (first top-up bonus: <?= (int) ($tx['first_bonus'] ?? 0) ?>)</span></div>
+    <div class="card tile"><b><?= $free ?></b><span>Free coins: welcome <?= (int) ($tx['welcome'] ?? 0) ?>, check-in <?= (int) ($tx['checkin'] ?? 0) ?>, invites <?= (int) ($tx['invite'] ?? 0) ?>, tasks <?= (int) ($tx['task'] ?? 0) ?></span></div>
     <div class="card tile"><b><?= $adCoins ?></b><span>Coins earned by watching ads</span></div>
     <div class="card tile"><b><?= $spent ?></b><span>Coins spent on episodes</span></div>
-    <div class="card tile"><b><?= $expired ?></b><span>Bonus coins that expired unused</span></div>
+    <div class="card tile"><b><?= $expired ?></b><span>Coins that expired unused, or were given up when an account was deleted (<?= -(int) ($tx['closed'] ?? 0) ?>)</span></div>
     <div class="card tile"><b><?= (int) ($held['paid'] ?? 0) ?> + <?= (int) ($held['bonus'] ?? 0) ?></b><span>Coins still in wallets: paid + bonus</span></div>
     <div class="card tile"><b><?= $sold > 0 ? '₹' . number_format($packRs / max(1, $sold + $packBonus), 2) : 'n/a' ?></b><span>Average price received per coin</span></div>
     <div class="card tile"><b>₹<?= $planRs ?> / ₹<?= $passRs ?></b><span>Test income from plans / show passes</span></div>
@@ -250,6 +278,22 @@ a{color:var(--marigold)}
     <label for="uf">Video file (vertical MP4 works best)</label><input id="uf" type="file" name="video" accept="video/mp4,video/webm,video/quicktime" required>
     <p class="sub" style="margin:8px 0 0">Upload limit on this hosting: <?= h(ini_get('upload_max_filesize')) ?> per file. Uploading again replaces the episode's video.</p>
     <button type="submit">Upload</button></form>
+
+  <h2>Subtitles</h2>
+  <form class="card" method="post" enctype="multipart/form-data"><input type="hidden" name="csrf" value="<?= $csrf ?>"><input type="hidden" name="act" value="subs">
+    <p class="sub" style="margin:0 0 4px">One .vtt or .srt file per episode. Viewers switch them on with the CC button. Episodes with subtitles: <?php $sb = $by('SELECT show_id, COUNT(*) FROM subs GROUP BY show_id'); echo $sb ? h(implode(', ', array_map(fn($k, $v) => "$k ($v)", array_keys($sb), $sb))) : 'none'; ?>.</p>
+    <div class="row"><div><label for="ss">Show</label><select id="ss" name="show"><?php foreach ($shows as $s): ?><option value="<?= h($s['id']) ?>"><?= h($s['title']) ?></option><?php endforeach; ?></select></div>
+    <div><label for="se">Episode number</label><input id="se" type="number" name="ep" min="1" value="1" required></div></div>
+    <label>Subtitle file <input type="file" name="sub" accept=".vtt,.srt,text/vtt"></label>
+    <label style="display:block;margin:6px 0"><input type="checkbox" name="remove" value="1"> Remove this episode's subtitles instead</label>
+    <button type="submit">Save subtitles</button></form>
+
+  <h2>Messages from viewers</h2>
+  <div class="card scroll"><table><tr><th>When</th><th>From</th><th>Contact</th><th>Message</th><th></th></tr>
+  <?php $fb = db()->query('SELECT * FROM feedback ORDER BY done, id DESC LIMIT 40')->fetchAll(); if (!$fb): ?><tr><td colspan="5">No messages yet.</td></tr><?php endif; foreach ($fb as $m): ?>
+    <tr<?= $m['done'] ? ' style="opacity:.5"' : '' ?>><td><?= date('j M H:i', (int) $m['created']) ?></td><td><?= h((string) $m['name']) ?></td><td><?= h((string) $m['contact']) ?></td><td style="white-space:pre-wrap"><?= h((string) $m['msg']) ?></td>
+    <td><?php if (!$m['done']): ?><form method="post"><input type="hidden" name="csrf" value="<?= $csrf ?>"><input type="hidden" name="act" value="fbdone"><input type="hidden" name="id" value="<?= (int) $m['id'] ?>"><button class="ghost" type="submit">Handled</button></form><?php endif; ?></td></tr>
+  <?php endforeach; ?></table></div>
 
   <h2>Import from Google Drive</h2>
   <div class="card">

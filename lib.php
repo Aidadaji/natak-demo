@@ -23,6 +23,12 @@ const PACKS = [
     'p249' => ['rs' => 249, 'coins' => 500, 'bonus' => 125],
     'p499' => ['rs' => 499, 'coins' => 1000, 'bonus' => 400],
 ];
+const FIRST_BONUS_PCT = 50;   // one-time extra on an account's first coin pack, as a share of the pack's base coins
+const TASKS = [              // daily tasks; each pays bonus coins once a day, accounts only
+    'watch3' => ['label' => 'Finish 3 episodes today', 'kind' => 'watch', 'need' => 3, 'coins' => 2],
+    'watch10' => ['label' => 'Finish 10 episodes today', 'kind' => 'watch', 'need' => 10, 'coins' => 4],
+    'share1' => ['label' => 'Share a show today', 'kind' => 'share', 'need' => 1, 'coins' => 2],
+];
 const PLANS = [
     'week' => ['rs' => 99, 'days' => 7, 'label' => '1 week'],
     'quarter' => ['rs' => 399, 'days' => 90, 'label' => '3 months'],
@@ -78,6 +84,7 @@ function db(): PDO {
     if (!$pdo->query('SELECT COUNT(*) FROM shows')->fetchColumn()) seed($pdo);
     migrate($pdo);
     migrate_reset($pdo);
+    migrate_feat($pdo);
     return $pdo;
 }
 
@@ -221,6 +228,44 @@ function migrate_reset(PDO $pdo): void {
         $pdo->exec("INSERT OR REPLACE INTO settings(k,v) VALUES('schema_reset','1')");
     }
     $pdo->exec('COMMIT');
+}
+
+/** Feedback inbox, daily tasks, subtitles, first-purchase bonus flag. */
+function migrate_feat(PDO $pdo): void {
+    $done = fn() => $pdo->query("SELECT v FROM settings WHERE k='schema_feat'")->fetchColumn() === '1';
+    if ($done()) return;
+    $pdo->exec('BEGIN IMMEDIATE');
+    if (!$done()) {
+        $pdo->exec('CREATE TABLE IF NOT EXISTS feedback(id INTEGER PRIMARY KEY, user_id INTEGER, name TEXT, contact TEXT, msg TEXT NOT NULL, created INTEGER NOT NULL, done INTEGER NOT NULL DEFAULT 0)');
+        $pdo->exec('CREATE TABLE IF NOT EXISTS task_claims(user_id INTEGER NOT NULL, task TEXT NOT NULL, day TEXT NOT NULL, created INTEGER NOT NULL, PRIMARY KEY(user_id, task, day))');
+        $pdo->exec('CREATE TABLE IF NOT EXISTS subs(show_id TEXT NOT NULL, ep INTEGER NOT NULL, file TEXT NOT NULL, PRIMARY KEY(show_id, ep))');
+        add_col($pdo, 'users', 'first_bonus', 'INTEGER NOT NULL DEFAULT 0');
+        // accounts that already bought a pack do not get the first-purchase offer
+        $pdo->exec("UPDATE users SET first_bonus=1 WHERE id IN (SELECT user_id FROM orders WHERE kind='coins' AND status='paid_test')");
+        $pdo->exec("INSERT OR REPLACE INTO settings(k,v) VALUES('schema_feat','1')");
+    }
+    $pdo->exec('COMMIT');
+}
+function day_start(): int { return (new DateTime('today', new DateTimeZone('Asia/Kolkata')))->getTimestamp(); }
+/** Today's task list for one user, with progress and whether each was claimed. */
+function tasks_for(array $u): array {
+    $uid = (int) $u['id'];
+    $q = db()->prepare('SELECT COUNT(*) FROM (SELECT DISTINCT show_id, ep FROM views WHERE user_id=? AND completed=1 AND created>=?)'); $q->execute([$uid, day_start()]);
+    $have = ['watch' => (int) $q->fetchColumn()];
+    $q = db()->prepare('SELECT COUNT(*) FROM shares WHERE user_id=? AND created>=?'); $q->execute([$uid, day_start()]);
+    $have['share'] = (int) $q->fetchColumn();
+    $q = db()->prepare('SELECT task, 1 FROM task_claims WHERE user_id=? AND day=?'); $q->execute([$uid, today()]);
+    $claimed = $q->fetchAll(PDO::FETCH_KEY_PAIR);
+    $out = [];
+    foreach (TASKS as $id => $t) $out[] = ['id' => $id, 'label' => $t['label'], 'need' => $t['need'], 'have' => min($t['need'], $have[$t['kind']]), 'coins' => $t['coins'], 'claimed' => isset($claimed[$id])];
+    return $out;
+}
+function sub_path(string $show, int $ep): ?string {
+    $q = db()->prepare('SELECT file FROM subs WHERE show_id=? AND ep=?'); $q->execute([$show, $ep]);
+    $f = $q->fetchColumn();
+    if (!$f) return null;
+    $p = data_dir() . '/subs/' . basename((string) $f);
+    return is_file($p) ? $p : null;
 }
 
 function migrate(PDO $pdo): void {
